@@ -1,6 +1,8 @@
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v1';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
+const LLM_KEY_STORAGE = 'driver-agent.pwa.openrouter-key.v1';
+const LLM_MODEL = 'openrouter/free';
 
 const INDICATORS = ['Количество выдач','Объём выдач','Количество клиентов','Объём сборов','Количество продаж','Количество бонусов'];
 const PRODUCTS = ['Ипотека','Кредитование','Страхование','Карты','Вклады','Бонусная программа','Общий'];
@@ -73,11 +75,11 @@ function detect(text) {
   else if (t.includes('бонус')) product = 'Бонусная программа';
 
   let indicator = null;
-  if (t.includes('выдач')) indicator = 'Количество выдач';
+  if ((t.includes('объем') || t.includes('объём')) && t.includes('выдач')) indicator = 'Объём выдач';
+  else if (t.includes('выдач')) indicator = 'Количество выдач';
   else if (t.includes('клиент')) indicator = 'Количество клиентов';
   else if (t.includes('сбор')) indicator = 'Объём сборов';
   else if (t.includes('продаж')) indicator = 'Количество продаж';
-  else if ((t.includes('объем') || t.includes('объём')) && t.includes('выдач')) indicator = 'Объём выдач';
   else if (t.includes('бонус')) indicator = 'Количество бонусов';
 
   let effectType = null;
@@ -96,6 +98,100 @@ function exactDuplicate(c) {
 function similarDrivers(c) {
   if (!c.indicator && !c.product) return [];
   return drivers.filter(d => (c.indicator && d.indicator === c.indicator) || (c.product && d.product === c.product)).slice(0,3);
+}
+
+
+function getLlmKey(){ return localStorage.getItem(LLM_KEY_STORAGE) || ''; }
+function setLlmBusy(busy){
+  const composer=document.getElementById('composer');
+  const button=composer?.querySelector('button[type="submit"]');
+  if(button){ button.disabled=busy; button.textContent=busy?'Думаю…':'Отправить'; }
+  composer?.classList.toggle('is-loading',busy);
+}
+function renderLlmSettings(){
+  const key=getLlmKey();
+  const input=document.getElementById('llmKey');
+  if(input && document.activeElement!==input) input.value=key;
+  const status=document.getElementById('llmStatus');
+  if(status){ status.textContent=key?'Подключена':'Не подключена'; status.className='llm-status '+(key?'online':'offline'); }
+  const meta=document.getElementById('llmMeta');
+  if(meta) meta.textContent=key ? `Модель: ${LLM_MODEL} · ключ сохранён локально` : `Модель: ${LLM_MODEL}`;
+}
+function cleanJsonText(text){
+  return String(text||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+}
+function normalizeLlmData(data){
+  const out={};
+  if(INDICATORS.includes(data?.indicator)) out.indicator=data.indicator;
+  if(PRODUCTS.includes(data?.product)) out.product=data.product;
+  if(['Доходы','Расходы'].includes(data?.effectType)) out.effectType=data.effectType;
+  if(['шт.','₽','%'].includes(data?.unit)) out.unit=data.unit;
+  if(['1','1000','1000000','1000000000'].includes(String(data?.base||''))) out.base=String(data.base);
+  if(data?.cost!==null && data?.cost!==undefined && String(data.cost).trim()){
+    const parsed=parseCost(String(data.cost)); if(parsed) out.cost=parsed.cost;
+  }
+  if(typeof data?.channel==='string' && data.channel.trim()) out.channel=data.channel.trim();
+  if(typeof data?.segment==='string' && data.segment.trim()) out.segment=data.segment.trim();
+  return out;
+}
+async function callOpenRouter(userText, candidate={}){
+  const key=getLlmKey();
+  if(!key) throw new Error('LLM_KEY_MISSING');
+  const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Твоя задача — извлечь параметры из сообщения пользователя. Ничего не выдумывай. Используй только значения из разрешённых справочников.\n\nПоказатели: ${INDICATORS.join(', ')}.\nПродукты: ${PRODUCTS.join(', ')}.\nТип эффекта: Доходы или Расходы.\nОсновные единицы измерения: шт., ₽, %.\nБаза стоимости: 1, 1000, 1000000 или 1000000000.\n\nВерни ТОЛЬКО один JSON-объект без markdown и пояснений с ключами: indicator, product, effectType, unit, base, cost, channel, segment. Для неизвестных параметров ставь null. Если пользователь уточняет или исправляет текущую карточку, учитывай текущие значения. Для фразы «объём выдач» выбирай показатель «Объём выдач», а не «Количество выдач». Стоимость верни числом/строкой в рублях без знака валюты.`;
+  const current=JSON.stringify(candidate||{});
+  const response=await fetch('https://openrouter.ai/api/v1/chat/completions',{
+    method:'POST',
+    headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`,'HTTP-Referer':location.origin,'X-Title':'Driver Agent'},
+    body:JSON.stringify({model:LLM_MODEL,temperature:0,messages:[{role:'system',content:system},{role:'user',content:`Текущая карточка: ${current}\n\nСообщение пользователя: ${userText}`} ]})
+  });
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok) throw new Error(payload?.error?.message || `OpenRouter: ${response.status}`);
+  const content=payload?.choices?.[0]?.message?.content;
+  if(!content) throw new Error('LLM вернула пустой ответ');
+  let parsed;
+  try{ parsed=JSON.parse(cleanJsonText(content)); }
+  catch{ throw new Error('Не удалось разобрать ответ LLM'); }
+  return normalizeLlmData(parsed);
+}
+function mergeLlmCandidate(data){
+  if(!flow) return;
+  const c=flow.candidate;
+  const oldIdentity=`${c.indicator||''}|${c.product||''}`;
+  Object.assign(c,data);
+  if(!c.unit && c.indicator) c.unit=unitFor(c.indicator);
+  const newIdentity=`${c.indicator||''}|${c.product||''}`;
+  if(oldIdentity!==newIdentity){ delete flow.duplicateChecked; delete flow.duplicateId; }
+}
+async function processUserText(text){
+  if(!getLlmKey()){
+    flow ? handleFlowAnswer(text) : startFlow(text);
+    return;
+  }
+  setLlmBusy(true);
+  try{
+    const data=await callOpenRouter(text,flow?.candidate||{});
+    if(!flow){
+      flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',channel:'',segment:'',status:'Черновик'},original:text};
+    }
+    mergeLlmCandidate(data);
+    flow.step=''; flow.options=[]; save();
+    continueFlow();
+  }catch(err){
+    console.warn('LLM fallback:',err);
+    addMessage('agent',`Не удалось обратиться к LLM (${err.message}). Продолжу по локальным правилам.`);
+    flow ? handleFlowAnswer(text) : startFlow(text);
+  }finally{ setLlmBusy(false); }
+}
+async function testLlmConnection(){
+  const btn=document.getElementById('testLlm');
+  if(!getLlmKey()){ toast('Сначала сохрани API key'); return; }
+  if(btn){btn.disabled=true;btn.textContent='Проверяю…';}
+  try{
+    await callOpenRouter('Создай драйвер количества клиентов по ипотеке',{});
+    toast('LLM отвечает');
+    document.getElementById('llmMeta').textContent=`Модель: ${LLM_MODEL} · соединение проверено`;
+  }catch(err){ toast(`Ошибка: ${err.message}`); }
+  finally{if(btn){btn.disabled=false;btn.textContent='Проверить';}}
 }
 
 function startFlow(text) {
@@ -178,7 +274,7 @@ ${c.name}
 }
 function finalizeDriver() {
   const c=flow.candidate;
-  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, channel:'', segment:'', status:'Черновик' };
+  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, channel:c.channel||'', segment:c.segment||'', status:'Черновик' };
   drivers.unshift(driver); flow=null; save(); renderRegistry(); updateSummary(); renderProgress(); renderContextActions();
   addMessage('agent', `Готово. «${driver.name}» создан в реестре со статусом «Черновик». Нажми на него в реестре, если нужно изменить параметры или перевести в другой статус.`);
   toast('Драйвер создан');
@@ -273,7 +369,7 @@ for(const tab of document.querySelectorAll('.tab')) tab.addEventListener('click'
 document.getElementById('composer').addEventListener('submit',e=>{
   e.preventDefault(); const input=document.getElementById('prompt'); const text=input.value.trim(); if(!text)return;
   addMessage('user',text); input.value='';
-  setTimeout(()=> flow ? handleFlowAnswer(text) : startFlow(text),120);
+  setTimeout(()=>processUserText(text),80);
 });
 document.getElementById('contextActions').addEventListener('click',e=>{
   const value=e.target.dataset.flowValue; const action=e.target.dataset.flowAction;
@@ -307,6 +403,19 @@ document.getElementById('deleteDriver').addEventListener('click',()=>{
   const id=document.getElementById('editId').value; if(!confirm('Удалить этот драйвер из локального реестра?'))return;
   drivers=drivers.filter(x=>x.id!==id);save();renderRegistry();updateSummary();closeDriver();toast('Драйвер удалён');
 });
+
+document.getElementById('saveLlmKey').addEventListener('click',()=>{
+  const input=document.getElementById('llmKey'); const key=input.value.trim();
+  if(!key){ toast('Вставь API key'); input.focus(); return; }
+  localStorage.setItem(LLM_KEY_STORAGE,key); renderLlmSettings(); toast('LLM подключена');
+});
+document.getElementById('testLlm').addEventListener('click',testLlmConnection);
+document.getElementById('clearLlmKey').addEventListener('click',()=>{
+  localStorage.removeItem(LLM_KEY_STORAGE); document.getElementById('llmKey').value=''; renderLlmSettings(); toast('LLM отключена');
+});
+document.getElementById('toggleKey').addEventListener('click',e=>{
+  const input=document.getElementById('llmKey'); const show=input.type==='password'; input.type=show?'text':'password'; e.target.textContent=show?'Скрыть':'Показать';
+});
 document.getElementById('resetButton').addEventListener('click',()=>{
   if(!confirm('Сбросить реестр, диалог и незавершённое создание?'))return;
   drivers=clone(seedDrivers);messages=clone(seedMessages);flow=null;save();renderAll();toast('Демо-данные восстановлены');
@@ -334,5 +443,5 @@ document.getElementById('prompt').addEventListener('blur',()=>{document.body.cla
 syncVisualViewport();
 
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));
-function renderAll(){renderMessages();renderContextActions();renderProgress();renderRegistry();renderDictionaries();updateSummary();}
+function renderAll(){renderMessages();renderContextActions();renderProgress();renderRegistry();renderDictionaries();renderLlmSettings();updateSummary();}
 renderAll();

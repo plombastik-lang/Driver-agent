@@ -17,34 +17,37 @@
   <main class="app-shell">
     <header class="topbar">
       <div>
-        <div class="eyebrow">C2V · prototype</div>
+        <div class="eyebrow">C2V · prototype v2</div>
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <button id="installButton" class="install-btn" hidden>Установить</button>
+      <span class="version-pill">v2</span>
     </header>
 
     <section class="summary-card">
-      <div><span id="driverCount">1</span><small>драйверов</small></div>
+      <div><span id="driverCount">0</span><small>драйверов</small></div>
       <div><span id="draftCount">0</span><small>черновиков</small></div>
-      <div><span id="readyCount">1</span><small>готово</small></div>
+      <div><span id="readyCount">0</span><small>готово</small></div>
     </section>
 
     <nav class="tabs" aria-label="Разделы">
-      <button class="tab active" data-tab="chat">Диалог</button>
+      <button class="tab active" data-tab="chat">Агент</button>
       <button class="tab" data-tab="registry">Реестр</button>
+      <button class="tab" data-tab="settings">Справочники</button>
     </nav>
 
     <section id="chat" class="panel active">
+      <div id="progress" class="progress-card" hidden></div>
       <div id="messages" class="messages"></div>
-      <div class="quick-actions">
+      <div id="contextActions" class="context-actions"></div>
+      <div class="quick-actions" id="quickActions">
         <button data-prompt="Создай драйвер количества выдач по ипотеке">Ипотека</button>
-        <button data-prompt="Создай драйвер количества продаж по картам">Карты</button>
         <button data-prompt="Создай драйвер объёма сборов по страхованию">Страхование</button>
+        <button data-prompt="Создай драйвер ПШЕ для не найма">ПШЕ</button>
       </div>
       <form id="composer" class="composer">
-        <textarea id="prompt" rows="2" placeholder="Например: создай драйвер количества клиентов по вкладам"></textarea>
-        <button type="submit">Создать драйвер</button>
+        <textarea id="prompt" rows="2" placeholder="Например: создай драйвер количества выдач по ипотеке"></textarea>
+        <button id="sendButton" type="submit">Отправить</button>
       </form>
     </section>
 
@@ -52,13 +55,61 @@
       <div class="registry-head">
         <div>
           <h2>Реестр драйверов</h2>
-          <p>Созданные агентом записи сохраняются на этом iPhone.</p>
+          <p>Нажми на карточку, чтобы посмотреть или изменить параметры.</p>
         </div>
-        <button id="resetButton" class="ghost-danger">Сбросить</button>
       </div>
+      <input id="registrySearch" class="search" type="search" placeholder="Поиск по драйверам…" />
       <div id="driverList" class="driver-list"></div>
     </section>
+
+    <section id="settings" class="panel">
+      <div class="registry-head">
+        <div>
+          <h2>Тестовые справочники</h2>
+          <p>Имитируют ЕКП / Final. Пока агент ищет сущности только здесь.</p>
+        </div>
+      </div>
+      <div class="dictionary-card">
+        <h3>Показатели</h3>
+        <div id="indicatorDict" class="chips"></div>
+      </div>
+      <div class="dictionary-card">
+        <h3>Продукты</h3>
+        <div id="productDict" class="chips"></div>
+      </div>
+      <div class="dictionary-card muted-card">
+        <h3>Логика прототипа</h3>
+        <p>Справочники локальные. Никакие данные не отправляются во внешние системы. На следующем этапе их можно заменить запросами к ЕКП / Final и подключить LLM.</p>
+      </div>
+      <button id="resetButton" class="ghost-danger full">Сбросить демо-данные</button>
+    </section>
   </main>
+
+  <div id="modal" class="modal" hidden>
+    <div class="modal-backdrop" data-close-modal></div>
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <header><h2>Карточка драйвера</h2><button class="icon-btn" data-close-modal>×</button></header>
+      <form id="driverForm" class="driver-form">
+        <input type="hidden" id="editId" />
+        <label>Название<input id="editName" required /></label>
+        <label>Показатель<input id="editIndicator" required /></label>
+        <label>Продукт<input id="editProduct" required /></label>
+        <div class="form-row">
+          <label>Тип эффекта<select id="editEffectType"><option>Доход</option><option>Расход</option><option>Сокращение</option><option>Не найм</option></select></label>
+          <label>Единица<input id="editUnit" /></label>
+        </div>
+        <div class="form-row">
+          <label>База<input id="editBase" /></label>
+          <label>Стоимость, ₽<input id="editCost" inputmode="decimal" /></label>
+        </div>
+        <label>Начало эффекта<input id="editStartDate" /></label>
+        <label>Статус<select id="editStatus"><option>Черновик</option><option>Требует согласования</option><option>Готов</option></select></label>
+        <button type="submit" class="primary">Сохранить</button>
+        <button type="button" id="deleteDriver" class="ghost-danger full">Удалить драйвер</button>
+      </form>
+    </div>
+  </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
   <script src="app.js"></script>

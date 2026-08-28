@@ -2,12 +2,12 @@ const REGISTRY_KEY = 'driver-agent.pwa.registry.v1';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 
-const INDICATORS = ['Количество выдач','Количество клиентов','Объём сборов','Количество продаж','Количество бонусов','ПШЕ'];
+const INDICATORS = ['Количество выдач','Объём выдач','Количество клиентов','Объём сборов','Количество продаж','Количество бонусов'];
 const PRODUCTS = ['Ипотека','Кредитование','Страхование','Карты','Вклады','Бонусная программа','Общий'];
 
 const seedDrivers = [{
   id: 'seed-1', name: 'Количество выдач — Ипотека', indicator: 'Количество выдач', product: 'Ипотека',
-  unit: 'шт.', effectType: 'Доходы', base: '1', cost: '2500', status: 'Готов'
+  unit: 'шт.', effectType: 'Доходы', base: '1', cost: '2500', channel: '', segment: '', status: 'Готов'
 }];
 const seedMessages = [{
   id: 'hello', role: 'agent',
@@ -23,6 +23,8 @@ drivers = drivers.map(d => ({
   ...d,
   effectType: ['Доход','Доходы'].includes(d.effectType) ? 'Доходы' : 'Расходы',
   base: normalizeStoredBase(d.base),
+  channel: d.channel || '',
+  segment: d.segment || '',
   status: d.status === 'Готов' && !String(d.cost || '').trim() ? 'Черновик' : d.status
 }));
 function normalizeStoredBase(base){
@@ -75,18 +77,17 @@ function detect(text) {
   else if (t.includes('клиент')) indicator = 'Количество клиентов';
   else if (t.includes('сбор')) indicator = 'Объём сборов';
   else if (t.includes('продаж')) indicator = 'Количество продаж';
-  else if (t.includes('пше') || t.includes('fte')) indicator = 'ПШЕ';
+  else if ((t.includes('объем') || t.includes('объём')) && t.includes('выдач')) indicator = 'Объём выдач';
   else if (t.includes('бонус')) indicator = 'Количество бонусов';
 
   let effectType = null;
-  if (t.includes('расход') || t.includes('сокращ') || t.includes('не найм') || t.includes('ненайм') || t.includes('пше') || t.includes('fte')) effectType = 'Расходы';
+  if (t.includes('расход') || t.includes('сокращ') || t.includes('не найм') || t.includes('ненайм')) effectType = 'Расходы';
   else if (t.includes('доход')) effectType = 'Доходы';
 
   return { indicator, product, effectType };
 }
 function unitFor(indicator) {
-  if (indicator === 'Объём сборов') return '₽';
-  if (indicator === 'ПШЕ') return 'ПШЕ';
+  if (indicator === 'Объём сборов' || indicator === 'Объём выдач') return '₽';
   return 'шт.';
 }
 function exactDuplicate(c) {
@@ -177,7 +178,7 @@ ${c.name}
 }
 function finalizeDriver() {
   const c=flow.candidate;
-  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, status:'Черновик' };
+  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, channel:'', segment:'', status:'Черновик' };
   drivers.unshift(driver); flow=null; save(); renderRegistry(); updateSummary(); renderProgress(); renderContextActions();
   addMessage('agent', `Готово. «${driver.name}» создан в реестре со статусом «Черновик». Нажми на него в реестре, если нужно изменить параметры или перевести в другой статус.`);
   toast('Драйвер создан');
@@ -189,7 +190,7 @@ function cancelFlow() {
 function renderMessages() {
   const el=document.getElementById('messages');
   el.innerHTML=messages.map(m=>`<div class="message ${m.role} ${m.kind==='preview'?'preview-message':''}"><span class="label">${m.role==='user'?'Вы':'Агент'}</span>${escapeHtml(m.text)}</div>`).join('');
-  requestAnimationFrame(()=>el.lastElementChild?.scrollIntoView({behavior:'smooth',block:'end'}));
+  requestAnimationFrame(()=>{ el.scrollTop=el.scrollHeight; });
 }
 function renderContextActions() {
   const el=document.getElementById('contextActions');
@@ -218,7 +219,7 @@ function renderRegistry() {
   el.innerHTML=list.map(d=>`<article class="driver-card" data-driver-id="${d.id}">
     <header><div><div class="mini-label">${escapeHtml(d.effectType)}</div><h3>${escapeHtml(d.name)}</h3></div><span class="badge ${d.status==='Готов'?'ready':d.status==='Требует согласования'?'approval':''}">${escapeHtml(d.status)}</span></header>
     <div class="cost-line"><strong>${escapeHtml(d.cost||'—')} ₽</strong><span>за ${escapeHtml(baseLabel(d.base))}</span></div>
-    <div class="meta-grid">${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('База стоимости',baseLabel(d.base))}${meta('Единица',d.unit)}</div>
+    <div class="meta-grid">${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('База стоимости',baseLabel(d.base))}${meta('Единица измерения',d.unit)}</div>
   </article>`).join('');
 }
 function meta(label,value){ return `<div class="meta"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`; }
@@ -228,7 +229,7 @@ function updateSummary(){
   document.getElementById('readyCount').textContent=drivers.filter(d=>d.status==='Готов').length;
 }
 function renderDictionaries(){
-  const unitMap={'Количество выдач':'шт.','Количество клиентов':'шт.','Объём сборов':'₽','Количество продаж':'шт.','Количество бонусов':'шт.','ПШЕ':'ПШЕ'};
+  const unitMap={'Количество выдач':'шт.','Объём выдач':'₽','Количество клиентов':'шт.','Объём сборов':'₽','Количество продаж':'шт.','Количество бонусов':'шт.'};
   document.getElementById('indicatorDict').innerHTML=INDICATORS.map(x=>`<tr><td>${escapeHtml(x)}</td><td>${escapeHtml(unitMap[x]||'—')}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
   document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
   document.getElementById('indicatorCount').textContent=`${INDICATORS.length} записей`;
@@ -246,7 +247,14 @@ function openDriver(id){
   document.getElementById('editIndicator').value=d.indicator;
   document.getElementById('editProduct').value=d.product;
   document.getElementById('editEffectType').value=d.effectType;
-  document.getElementById('editUnit').value=d.unit;
+  const commonUnits=['шт.','₽','%'];
+  const unitSelect=document.getElementById('editUnit');
+  const unitOther=document.getElementById('editUnitOther');
+  unitSelect.value=commonUnits.includes(d.unit) ? d.unit : 'other';
+  unitOther.hidden=unitSelect.value!=='other';
+  unitOther.value=unitSelect.value==='other' ? (d.unit||'') : '';
+  document.getElementById('editChannel').value=d.channel||'';
+  document.getElementById('editSegment').value=d.segment||'';
   document.getElementById('editBase').value=d.base||'';
   document.getElementById('editCost').value=d.cost||'';
   document.getElementById('editStatus').value=d.status;
@@ -284,8 +292,16 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
   const cost=document.getElementById('editCost').value.trim();
   const status=document.getElementById('editStatus').value;
   if(status==='Готов' && !cost){ toast('Сначала укажи стоимость'); document.getElementById('editCost').focus(); return; }
-  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit:document.getElementById('editUnit').value.trim(),base:document.getElementById('editBase').value,cost,status});
+  const selectedUnit=document.getElementById('editUnit').value;
+  const unit=selectedUnit==='other' ? document.getElementById('editUnitOther').value.trim() : selectedUnit;
+  if(!unit){ toast('Укажи единицу измерения'); return; }
+  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit,channel:document.getElementById('editChannel').value.trim(),segment:document.getElementById('editSegment').value.trim(),base:document.getElementById('editBase').value,cost,status});
   save();renderRegistry();updateSummary();closeDriver();toast('Изменения сохранены');
+});
+document.getElementById('editUnit').addEventListener('change',e=>{
+  const other=document.getElementById('editUnitOther');
+  other.hidden=e.target.value!=='other';
+  if(!other.hidden) setTimeout(()=>other.focus(),50);
 });
 document.getElementById('deleteDriver').addEventListener('click',()=>{
   const id=document.getElementById('editId').value; if(!confirm('Удалить этот драйвер из локального реестра?'))return;
@@ -296,22 +312,25 @@ document.getElementById('resetButton').addEventListener('click',()=>{
   drivers=clone(seedDrivers);messages=clone(seedMessages);flow=null;save();renderAll();toast('Демо-данные восстановлены');
 });
 
-// iPhone/PWA: поднимаем чат и поле ввода над экранной клавиатурой
+// iPhone/PWA: при открытой клавиатуре фиксируем оболочку в visual viewport,
+// а прокручиваем только переписку — основной экран больше не прыгает вниз.
 function syncVisualViewport(){
   const vv=window.visualViewport;
   const h=vv ? vv.height : window.innerHeight;
   document.documentElement.style.setProperty('--visual-height', `${h}px`);
-  if(document.activeElement?.id==='prompt'){
+  const prompt=document.getElementById('prompt');
+  const isKeyboard=prompt===document.activeElement && window.innerHeight-h>120;
+  document.body.classList.toggle('keyboard-open', isKeyboard);
+  if(isKeyboard){
     requestAnimationFrame(()=>{
-      document.getElementById('composer')?.scrollIntoView({block:'end',behavior:'smooth'});
-      document.getElementById('messages')?.lastElementChild?.scrollIntoView({block:'end',behavior:'smooth'});
+      const messagesEl=document.getElementById('messages');
+      messagesEl.scrollTop=messagesEl.scrollHeight;
     });
   }
 }
 window.visualViewport?.addEventListener('resize',syncVisualViewport);
-window.visualViewport?.addEventListener('scroll',syncVisualViewport);
-document.getElementById('prompt').addEventListener('focus',()=>setTimeout(syncVisualViewport,180));
-document.getElementById('prompt').addEventListener('blur',()=>setTimeout(syncVisualViewport,80));
+document.getElementById('prompt').addEventListener('focus',()=>setTimeout(syncVisualViewport,120));
+document.getElementById('prompt').addEventListener('blur',()=>{document.body.classList.remove('keyboard-open');setTimeout(syncVisualViewport,80)});
 syncVisualViewport();
 
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));

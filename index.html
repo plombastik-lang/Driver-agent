@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.2" />
+  <link rel="stylesheet" href="styles.css?v=2.3" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v2.2</span>
+      <span class="version-pill">v2.3</span>
     </header>
 
     <section class="summary-card">
@@ -40,11 +40,6 @@
       <div id="progress" class="progress-card" hidden></div>
       <div id="messages" class="messages"></div>
       <div id="contextActions" class="context-actions"></div>
-      <div class="quick-actions">
-        <button data-prompt="Создай драйвер количества выдач по ипотеке">Ипотека</button>
-        <button data-prompt="Создай драйвер объёма сборов по страхованию">Страхование</button>
-        <button data-prompt="Создай драйвер ПШЕ для не найма">ПШЕ</button>
-      </div>
       <form id="composer" class="composer">
         <textarea id="prompt" rows="2" placeholder="Например: создай драйвер количества выдач по ипотеке"></textarea>
         <button type="submit">Отправить</button>
@@ -77,16 +72,15 @@
           <div class="form-section">
             <h3>Параметры эффекта</h3>
             <div class="form-grid">
-              <label>Тип эффекта<select id="editEffectType"><option>Доход</option><option>Расход</option><option>Сокращение</option><option>Не найм</option></select></label>
+              <label>Тип эффекта<select id="editEffectType"><option>Доходы</option><option>Расходы</option></select></label>
               <label>Единица<input id="editUnit" /></label>
-              <label>База<input id="editBase" /></label>
+              <label>База стоимости<select id="editBase"><option value="">Не выбрана</option><option value="1">1</option><option value="1000">1 000</option><option value="1000000">1 млн</option><option value="1000000000">1 млрд</option></select></label>
               <label>Стоимость, ₽<input id="editCost" inputmode="decimal" /></label>
             </div>
-            <label>Начало эффекта<input id="editStartDate" placeholder="ДД.ММ.ГГГГ" /></label>
           </div>
           <div class="form-section">
             <h3>Статус</h3>
-            <label>Статус<select id="editStatus"><option>Черновик</option><option>Требует согласования</option><option>Готов</option></select></label>
+            <label>Статус<select id="editStatus"><option>Черновик</option><option>Требует согласования</option><option>Готов</option></select></label><p class="status-hint">Статус «Готов» доступен только при заполненной стоимости.</p>
           </div>
           <div class="detail-actions">
             <button type="submit" class="primary">Сохранить изменения</button>
@@ -106,12 +100,11 @@
         <div class="table-title"><h3>Продукты</h3><span id="productCount"></span></div>
         <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="productDict"></tbody></table></div>
       </div>
-      <div class="info-card"><strong>О прототипе</strong><p>Сейчас справочники и реестр хранятся локально на устройстве. На следующих версиях можно подключить реальные источники данных и интеллектуальный разбор запросов.</p></div>
       <button id="resetButton" class="ghost-danger full">Сбросить демо-данные</button>
     </section>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=2.2"></script>
+  <script src="app.js?v=2.3"></script>
 </body>
 </html>

@@ -7,7 +7,7 @@ const PRODUCTS = ['Ипотека','Кредитование','Страхова�
 
 const seedDrivers = [{
   id: 'seed-1', name: 'Количество выдач — Ипотека', indicator: 'Количество выдач', product: 'Ипотека',
-  unit: 'шт.', effectType: 'Доход', base: '1 выдача', cost: '2500', startDate: '01.09.2026', status: 'Готов'
+  unit: 'шт.', effectType: 'Доходы', base: '1', cost: '2500', status: 'Готов'
 }];
 const seedMessages = [{
   id: 'hello', role: 'agent',
@@ -17,6 +17,26 @@ const seedMessages = [{
 let drivers = load(REGISTRY_KEY, seedDrivers);
 let messages = load(MESSAGES_KEY, seedMessages);
 let flow = load(FLOW_KEY, null);
+
+// Миграция данных из предыдущих версий
+drivers = drivers.map(d => ({
+  ...d,
+  effectType: ['Доход','Доходы'].includes(d.effectType) ? 'Доходы' : 'Расходы',
+  base: normalizeStoredBase(d.base),
+  status: d.status === 'Готов' && !String(d.cost || '').trim() ? 'Черновик' : d.status
+}));
+function normalizeStoredBase(base){
+  const s=String(base||'').toLowerCase().replace(/\s/g,'');
+  if(!s) return '';
+  if(s.includes('млрд')) return '1000000000';
+  if(s.includes('млн')) return '1000000';
+  const n=s.match(/\d+/)?.[0];
+  if(n==='1'||n==='1000'||n==='1000000'||n==='1000000000') return n;
+  return '1';
+}
+function baseLabel(base){
+  return ({'1':'1','1000':'1 000','1000000':'1 млн','1000000000':'1 млрд'})[String(base)] || 'не задана';
+}
 
 function clone(v){ return JSON.parse(JSON.stringify(v)); }
 function load(key, fallback) {
@@ -59,10 +79,8 @@ function detect(text) {
   else if (t.includes('бонус')) indicator = 'Количество бонусов';
 
   let effectType = null;
-  if (t.includes('сокращ')) effectType = 'Сокращение';
-  else if (t.includes('не найм') || t.includes('ненайм')) effectType = 'Не найм';
-  else if (t.includes('расход')) effectType = 'Расход';
-  else if (t.includes('доход')) effectType = 'Доход';
+  if (t.includes('расход') || t.includes('сокращ') || t.includes('не найм') || t.includes('ненайм') || t.includes('пше') || t.includes('fte')) effectType = 'Расходы';
+  else if (t.includes('доход')) effectType = 'Доходы';
 
   return { indicator, product, effectType };
 }
@@ -81,7 +99,7 @@ function similarDrivers(c) {
 
 function startFlow(text) {
   const detected = detect(text);
-  flow = { step:'', candidate:{ ...detected, unit: unitFor(detected.indicator), base:'', cost:'', startDate:'', status:'Черновик' }, original:text };
+  flow = { step:'', candidate:{ ...detected, unit: unitFor(detected.indicator), base:'', cost:'', status:'Черновик' }, original:text };
   save();
   continueFlow();
 }
@@ -104,9 +122,9 @@ function continueFlow() {
     const similar = similarDrivers(c);
     if (similar.length) addMessage('agent', `Проверил реестр. Точного дубля нет, но есть ${similar.length} похожих записей. Продолжаю создание нового драйвера.`);
   }
-  if (!c.effectType) return ask('effectType', 'Какой тип эффекта у драйвера?', ['Доход','Расход','Сокращение','Не найм']);
-  if (!c.base || !c.cost) return ask('cost', 'Укажи базу и стоимость эффекта в рублях. Например: «1000 бонусов = 20 рублей» или «1 выдача = 2500 рублей».');
-  if (!c.startDate) return ask('startDate', 'Когда должен начать действовать эффект? Можно написать дату, например «01.10.2026», или нажать «Задать позже».', ['Задать позже']);
+  if (!c.effectType) return ask('effectType', 'Какой тип эффекта у драйвера?', ['Доходы','Расходы']);
+  if (!c.base) return ask('base', 'Выбери базу стоимости драйвера.', ['1','1 000','1 млн','1 млрд']);
+  if (!c.cost) return ask('cost', `Укажи стоимость в рублях для базы ${baseLabel(c.base)}. Например: «2500».`);
   showPreview();
 }
 function ask(step, text, options=[]) {
@@ -118,43 +136,48 @@ function handleFlowAnswer(text) {
   if (flow.step === 'indicator') c.indicator = text.trim();
   else if (flow.step === 'product') c.product = text.trim();
   else if (flow.step === 'effectType') c.effectType = normalizeEffect(text);
+  else if (flow.step === 'base') c.base = normalizeBaseAnswer(text);
   else if (flow.step === 'cost') {
     const parsed = parseCost(text);
     if (!parsed) {
-      addMessage('agent','Не смог уверенно разобрать стоимость. Напиши в формате «1000 бонусов = 20 рублей» или «1 выдача = 2500 рублей».');
+      addMessage('agent','Не смог разобрать стоимость. Укажи сумму в рублях, например «2500».');
       return;
     }
-    c.base = parsed.base; c.cost = parsed.cost;
+    c.cost = parsed.cost;
   }
-  else if (flow.step === 'startDate') c.startDate = text === 'Задать позже' ? 'Не задана' : text.trim();
   flow.step = ''; flow.options = []; save(); continueFlow();
 }
 function normalizeEffect(text) {
   const t=text.toLowerCase();
-  if (t.includes('сокращ')) return 'Сокращение';
-  if (t.includes('не найм') || t.includes('ненайм')) return 'Не найм';
-  if (t.includes('расход')) return 'Расход';
-  return 'Доход';
+  return t.includes('расход') || t.includes('сокращ') || t.includes('не найм') || t.includes('ненайм') ? 'Расходы' : 'Доходы';
+}
+function normalizeBaseAnswer(text){
+  const t=text.toLowerCase().replace(/\s/g,'');
+  if(t.includes('млрд')) return '1000000000';
+  if(t.includes('млн')) return '1000000';
+  if(t.includes('1000')) return '1000';
+  return '1';
 }
 function parseCost(text) {
-  const nums = text.replace(',','.').match(/\d+(?:\.\d+)?/g);
-  if (!nums?.length) return null;
-  if (nums.length >= 2) {
-    const firstPos = text.indexOf(nums[0]); const secondPos = text.indexOf(nums[1], firstPos + nums[0].length);
-    const label = text.slice(firstPos + nums[0].length, secondPos).replace(/[=–—:\-]/g,' ').trim();
-    return { base: `${nums[0]}${label ? ' ' + label : ' ед.'}`.replace(/\s+/g,' '), cost: nums[1] };
-  }
-  return { base:'1 ед.', cost:nums[0] };
+  const n=text.replace(/\s/g,'').replace(',','.').match(/\d+(?:\.\d+)?/);
+  return n ? {cost:n[0]} : null;
 }
 function showPreview() {
   const c=flow.candidate; c.name = `${c.indicator} — ${c.product}`;
   flow.step='preview'; save();
-  addMessage('agent', `Проверь карточку перед созданием:\n\n${c.name}\nПоказатель: ${c.indicator}\nПродукт: ${c.product}\nТип эффекта: ${c.effectType}\nБаза: ${c.base}\nСтоимость: ${c.cost} ₽\nНачало эффекта: ${c.startDate}`,'preview');
+  addMessage('agent', `Проверь карточку перед созданием:
+
+${c.name}
+Показатель: ${c.indicator}
+Продукт: ${c.product}
+Тип эффекта: ${c.effectType}
+База стоимости: ${baseLabel(c.base)}
+Стоимость: ${c.cost} ₽`,'preview');
   renderContextActions(); renderProgress();
 }
 function finalizeDriver() {
   const c=flow.candidate;
-  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, startDate:c.startDate, status:'Черновик' };
+  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, status:'Черновик' };
   drivers.unshift(driver); flow=null; save(); renderRegistry(); updateSummary(); renderProgress(); renderContextActions();
   addMessage('agent', `Готово. «${driver.name}» создан в реестре со статусом «Черновик». Нажми на него в реестре, если нужно изменить параметры или перевести в другой статус.`);
   toast('Драйвер создан');
@@ -183,9 +206,9 @@ function renderProgress() {
   const el=document.getElementById('progress');
   if (!flow) { el.hidden=true; return; }
   const c=flow.candidate;
-  const complete=[c.indicator,c.product,c.effectType,c.base&&c.cost,c.startDate].filter(Boolean).length;
+  const complete=[c.indicator,c.product,c.effectType,c.base&&c.cost].filter(Boolean).length;
   el.hidden=false;
-  el.innerHTML=`<div><strong>Создание драйвера</strong><span>${complete}/5 параметров</span></div><div class="progress-track"><i style="width:${complete*20}%"></i></div><small>${escapeHtml(c.indicator||'Показатель не определён')} · ${escapeHtml(c.product||'Продукт не определён')}</small>`;
+  el.innerHTML=`<div><strong>Создание драйвера</strong><span>${complete}/4 параметров</span></div><div class="progress-track"><i style="width:${complete*25}%"></i></div><small>${escapeHtml(c.indicator||'Показатель не определён')} · ${escapeHtml(c.product||'Продукт не определён')}</small>`;
 }
 function renderRegistry() {
   const q=(document.getElementById('registrySearch')?.value||'').trim().toLowerCase();
@@ -194,8 +217,8 @@ function renderRegistry() {
   if (!list.length) { el.innerHTML='<div class="empty">Ничего не найдено</div>'; return; }
   el.innerHTML=list.map(d=>`<article class="driver-card" data-driver-id="${d.id}">
     <header><div><div class="mini-label">${escapeHtml(d.effectType)}</div><h3>${escapeHtml(d.name)}</h3></div><span class="badge ${d.status==='Готов'?'ready':d.status==='Требует согласования'?'approval':''}">${escapeHtml(d.status)}</span></header>
-    <div class="cost-line"><strong>${escapeHtml(d.cost||'—')} ₽</strong><span>за ${escapeHtml(d.base||'не задано')}</span></div>
-    <div class="meta-grid">${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Начало эффекта',d.startDate||'Не задана')} ${meta('Единица',d.unit)}</div>
+    <div class="cost-line"><strong>${escapeHtml(d.cost||'—')} ₽</strong><span>за ${escapeHtml(baseLabel(d.base))}</span></div>
+    <div class="meta-grid">${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('База стоимости',baseLabel(d.base))}${meta('Единица',d.unit)}</div>
   </article>`).join('');
 }
 function meta(label,value){ return `<div class="meta"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`; }
@@ -226,7 +249,6 @@ function openDriver(id){
   document.getElementById('editUnit').value=d.unit;
   document.getElementById('editBase').value=d.base||'';
   document.getElementById('editCost').value=d.cost||'';
-  document.getElementById('editStartDate').value=d.startDate||'';
   document.getElementById('editStatus').value=d.status;
   document.getElementById('detailHeading').textContent=d.name;
   const badge=document.getElementById('detailBadge'); badge.textContent=d.status; badge.className='badge '+(d.status==='Готов'?'ready':d.status==='Требует согласования'?'approval':'');
@@ -245,7 +267,6 @@ document.getElementById('composer').addEventListener('submit',e=>{
   addMessage('user',text); input.value='';
   setTimeout(()=> flow ? handleFlowAnswer(text) : startFlow(text),120);
 });
-document.querySelectorAll('[data-prompt]').forEach(btn=>btn.addEventListener('click',()=>{document.getElementById('prompt').value=btn.dataset.prompt;document.getElementById('prompt').focus();}));
 document.getElementById('contextActions').addEventListener('click',e=>{
   const value=e.target.dataset.flowValue; const action=e.target.dataset.flowAction;
   if(value){ addMessage('user',value); handleFlowAnswer(value); return; }
@@ -260,7 +281,10 @@ document.getElementById('driverList').addEventListener('click',e=>{const card=e.
 document.getElementById('backToRegistry').addEventListener('click',closeDriver);
 document.getElementById('driverForm').addEventListener('submit',e=>{
   e.preventDefault(); const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
-  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit:document.getElementById('editUnit').value.trim(),base:document.getElementById('editBase').value.trim(),cost:document.getElementById('editCost').value.trim(),startDate:document.getElementById('editStartDate').value.trim(),status:document.getElementById('editStatus').value});
+  const cost=document.getElementById('editCost').value.trim();
+  const status=document.getElementById('editStatus').value;
+  if(status==='Готов' && !cost){ toast('Сначала укажи стоимость'); document.getElementById('editCost').focus(); return; }
+  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit:document.getElementById('editUnit').value.trim(),base:document.getElementById('editBase').value,cost,status});
   save();renderRegistry();updateSummary();closeDriver();toast('Изменения сохранены');
 });
 document.getElementById('deleteDriver').addEventListener('click',()=>{
@@ -271,6 +295,24 @@ document.getElementById('resetButton').addEventListener('click',()=>{
   if(!confirm('Сбросить реестр, диалог и незавершённое создание?'))return;
   drivers=clone(seedDrivers);messages=clone(seedMessages);flow=null;save();renderAll();toast('Демо-данные восстановлены');
 });
+
+// iPhone/PWA: поднимаем чат и поле ввода над экранной клавиатурой
+function syncVisualViewport(){
+  const vv=window.visualViewport;
+  const h=vv ? vv.height : window.innerHeight;
+  document.documentElement.style.setProperty('--visual-height', `${h}px`);
+  if(document.activeElement?.id==='prompt'){
+    requestAnimationFrame(()=>{
+      document.getElementById('composer')?.scrollIntoView({block:'end',behavior:'smooth'});
+      document.getElementById('messages')?.lastElementChild?.scrollIntoView({block:'end',behavior:'smooth'});
+    });
+  }
+}
+window.visualViewport?.addEventListener('resize',syncVisualViewport);
+window.visualViewport?.addEventListener('scroll',syncVisualViewport);
+document.getElementById('prompt').addEventListener('focus',()=>setTimeout(syncVisualViewport,180));
+document.getElementById('prompt').addEventListener('blur',()=>setTimeout(syncVisualViewport,80));
+syncVisualViewport();
 
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));
 function renderAll(){renderMessages();renderContextActions();renderProgress();renderRegistry();renderDictionaries();updateSummary();}

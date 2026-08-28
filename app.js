@@ -205,22 +205,40 @@ function updateSummary(){
   document.getElementById('readyCount').textContent=drivers.filter(d=>d.status==='Готов').length;
 }
 function renderDictionaries(){
-  document.getElementById('indicatorDict').innerHTML=INDICATORS.map(x=>`<span>${escapeHtml(x)}</span>`).join('');
-  document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<span>${escapeHtml(x)}</span>`).join('');
+  const unitMap={'Количество выдач':'шт.','Количество клиентов':'шт.','Объём сборов':'₽','Количество продаж':'шт.','Количество бонусов':'шт.','ПШЕ':'ПШЕ'};
+  document.getElementById('indicatorDict').innerHTML=INDICATORS.map(x=>`<tr><td>${escapeHtml(x)}</td><td>${escapeHtml(unitMap[x]||'—')}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  document.getElementById('indicatorCount').textContent=`${INDICATORS.length} записей`;
+  document.getElementById('productCount').textContent=`${PRODUCTS.length} записей`;
 }
 function switchTab(name){
+  closeDriver();
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active',x.id===name));
 }
 function openDriver(id){
   const d=drivers.find(x=>x.id===id); if(!d)return;
-  document.getElementById('editId').value=d.id; document.getElementById('editName').value=d.name; document.getElementById('editIndicator').value=d.indicator;
-  document.getElementById('editProduct').value=d.product; document.getElementById('editEffectType').value=d.effectType; document.getElementById('editUnit').value=d.unit;
-  document.getElementById('editBase').value=d.base||''; document.getElementById('editCost').value=d.cost||''; document.getElementById('editStartDate').value=d.startDate||''; document.getElementById('editStatus').value=d.status;
-  document.getElementById('modal').hidden=false; document.body.classList.add('modal-open');
+  document.getElementById('editId').value=d.id;
+  document.getElementById('editName').value=d.name;
+  document.getElementById('editIndicator').value=d.indicator;
+  document.getElementById('editProduct').value=d.product;
+  document.getElementById('editEffectType').value=d.effectType;
+  document.getElementById('editUnit').value=d.unit;
+  document.getElementById('editBase').value=d.base||'';
+  document.getElementById('editCost').value=d.cost||'';
+  document.getElementById('editStartDate').value=d.startDate||'';
+  document.getElementById('editStatus').value=d.status;
+  document.getElementById('detailHeading').textContent=d.name;
+  const badge=document.getElementById('detailBadge'); badge.textContent=d.status; badge.className='badge '+(d.status==='Готов'?'ready':d.status==='Требует согласования'?'approval':'');
+  document.getElementById('registryListView').hidden=true;
+  document.getElementById('driverDetailView').hidden=false;
+  window.scrollTo({top:0,behavior:'smooth'});
 }
-function closeModal(){ document.getElementById('modal').hidden=true; document.body.classList.remove('modal-open'); }
-
+function closeDriver(){
+  document.getElementById('driverDetailView').hidden=true;
+  document.getElementById('registryListView').hidden=false;
+  window.scrollTo({top:0,behavior:'smooth'});
+}
 for(const tab of document.querySelectorAll('.tab')) tab.addEventListener('click',()=>switchTab(tab.dataset.tab));
 document.getElementById('composer').addEventListener('submit',e=>{
   e.preventDefault(); const input=document.getElementById('prompt'); const text=input.value.trim(); if(!text)return;
@@ -239,15 +257,15 @@ document.getElementById('contextActions').addEventListener('click',e=>{
 });
 document.getElementById('registrySearch').addEventListener('input',renderRegistry);
 document.getElementById('driverList').addEventListener('click',e=>{const card=e.target.closest('[data-driver-id]');if(card)openDriver(card.dataset.driverId);});
-document.querySelectorAll('[data-close-modal]').forEach(x=>x.addEventListener('click',closeModal));
+document.getElementById('backToRegistry').addEventListener('click',closeDriver);
 document.getElementById('driverForm').addEventListener('submit',e=>{
   e.preventDefault(); const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
   Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit:document.getElementById('editUnit').value.trim(),base:document.getElementById('editBase').value.trim(),cost:document.getElementById('editCost').value.trim(),startDate:document.getElementById('editStartDate').value.trim(),status:document.getElementById('editStatus').value});
-  save();renderRegistry();updateSummary();closeModal();toast('Изменения сохранены');
+  save();renderRegistry();updateSummary();closeDriver();toast('Изменения сохранены');
 });
 document.getElementById('deleteDriver').addEventListener('click',()=>{
   const id=document.getElementById('editId').value; if(!confirm('Удалить этот драйвер из локального реестра?'))return;
-  drivers=drivers.filter(x=>x.id!==id);save();renderRegistry();updateSummary();closeModal();toast('Драйвер удалён');
+  drivers=drivers.filter(x=>x.id!==id);save();renderRegistry();updateSummary();closeDriver();toast('Драйвер удалён');
 });
 document.getElementById('resetButton').addEventListener('click',()=>{
   if(!confirm('Сбросить реестр, диалог и незавершённое создание?'))return;

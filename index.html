@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.5" />
+  <link rel="stylesheet" href="styles.css?v=2.7" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v2.5</span>
+      <span class="version-pill">v2.7</span>
     </header>
 
     <section class="summary-card">
@@ -37,6 +37,10 @@
     </nav>
 
     <section id="chat" class="panel active">
+      <div class="chat-session-bar">
+        <span>Текущая сессия</span>
+        <button id="endSession" type="button">Завершить сессию</button>
+      </div>
       <div id="progress" class="progress-card" hidden></div>
       <div id="messages" class="messages"></div>
       <div id="contextActions" class="context-actions"></div>
@@ -49,7 +53,7 @@
     <section id="registry" class="panel">
       <div id="registryListView">
         <div class="section-head">
-          <div><h2>Реестр драйверов</h2><p>Выбери драйвер, чтобы открыть его карточку.</p></div>
+          <div><h2>Реестр драйверов</h2><p>Нажми на строку, чтобы развернуть карточку драйвера.</p></div>
         </div>
         <input id="registrySearch" class="search" type="search" placeholder="Поиск по драйверам…" />
         <div id="driverList" class="driver-list"></div>
@@ -137,6 +141,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=2.5"></script>
+  <script src="app.js?v=2.7"></script>
 </body>
 </html>

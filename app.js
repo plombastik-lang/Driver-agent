@@ -2,6 +2,7 @@ const REGISTRY_KEY = 'driver-agent.pwa.registry.v1';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 const LLM_KEY_STORAGE = 'driver-agent.pwa.openrouter-key.v1';
+const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
 const LLM_MODEL = 'openrouter/free';
 
 const INDICATORS = ['Количество выдач','Объём выдач','Количество клиентов','Объём сборов','Количество продаж','Количество бонусов'];
@@ -19,6 +20,7 @@ const seedMessages = [{
 let drivers = load(REGISTRY_KEY, seedDrivers);
 let messages = load(MESSAGES_KEY, seedMessages);
 let flow = load(FLOW_KEY, null);
+let expandedDriverId = null;
 
 // Миграция данных из предыдущих версий
 drivers = drivers.map(d => ({
@@ -118,12 +120,15 @@ function renderLlmSettings(){
   if(meta) meta.textContent=key ? `Модель: ${LLM_MODEL} · ключ сохранён локально` : `Модель: ${LLM_MODEL}`;
 }
 function cleanJsonText(text){
-  return String(text||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+  const cleaned=String(text||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
+  const start=cleaned.indexOf('{'), end=cleaned.lastIndexOf('}');
+  return start>=0 && end>start ? cleaned.slice(start,end+1) : cleaned;
 }
+
 function normalizeLlmData(data){
   const out={};
   if(INDICATORS.includes(data?.indicator)) out.indicator=data.indicator;
-  if(PRODUCTS.includes(data?.product)) out.product=data.product;
+  if(typeof data?.product==='string' && data.product.trim()) out.product=data.product.trim();
   if(['Доходы','Расходы'].includes(data?.effectType)) out.effectType=data.effectType;
   if(['шт.','₽','%'].includes(data?.unit)) out.unit=data.unit;
   if(['1','1000','1000000','1000000000'].includes(String(data?.base||''))) out.base=String(data.base);
@@ -134,15 +139,15 @@ function normalizeLlmData(data){
   if(typeof data?.segment==='string' && data.segment.trim()) out.segment=data.segment.trim();
   return out;
 }
-async function callOpenRouter(userText, candidate={}){
+async function callOpenRouter(userText, candidate={}, expectedStep=''){
   const key=getLlmKey();
   if(!key) throw new Error('LLM_KEY_MISSING');
-  const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Твоя задача — извлечь параметры из сообщения пользователя. Ничего не выдумывай. Используй только значения из разрешённых справочников.\n\nПоказатели: ${INDICATORS.join(', ')}.\nПродукты: ${PRODUCTS.join(', ')}.\nТип эффекта: Доходы или Расходы.\nОсновные единицы измерения: шт., ₽, %.\nБаза стоимости: 1, 1000, 1000000 или 1000000000.\n\nВерни ТОЛЬКО один JSON-объект без markdown и пояснений с ключами: indicator, product, effectType, unit, base, cost, channel, segment. Для неизвестных параметров ставь null. Если пользователь уточняет или исправляет текущую карточку, учитывай текущие значения. Для фразы «объём выдач» выбирай показатель «Объём выдач», а не «Количество выдач». Стоимость верни числом/строкой в рублях без знака валюты.`;
+  const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Извлекай параметры из сообщения пользователя и не выдумывай то, чего нет в тексте.\n\nПоказатели из справочника: ${INDICATORS.join(', ')}. Если смысл точно соответствует одному из них, используй точное название из справочника.\nПродукт должен быть только из справочника: ${PRODUCTS.join(', ')}. Если в сообщении указан другой продукт, верни его как услышал — приложение отдельно проверит справочник и завершит процесс, если продукта нет. Не подменяй неизвестный продукт похожим из справочника.\nТип эффекта: Доходы или Расходы. Основные единицы измерения: шт., ₽, %. База стоимости: 1, 1000, 1000000 или 1000000000.\n\nВерни ТОЛЬКО один JSON-объект без markdown и пояснений с ключами: indicator, product, effectType, unit, base, cost, channel, segment. Для неизвестных параметров ставь null. Если пользователь отвечает коротко на уточняющий вопрос, учитывай поле, которое сейчас ожидается. Для фразы «объём выдач» выбирай «Объём выдач», а не «Количество выдач». Стоимость верни числом/строкой в рублях без знака валюты.`;
   const current=JSON.stringify(candidate||{});
   const response=await fetch('https://openrouter.ai/api/v1/chat/completions',{
     method:'POST',
     headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`,'HTTP-Referer':location.origin,'X-Title':'Driver Agent'},
-    body:JSON.stringify({model:LLM_MODEL,temperature:0,messages:[{role:'system',content:system},{role:'user',content:`Текущая карточка: ${current}\n\nСообщение пользователя: ${userText}`} ]})
+    body:JSON.stringify({model:LLM_MODEL,temperature:0,messages:[{role:'system',content:system},{role:'user',content:`Текущая карточка: ${current}\nОжидаемое поле: ${expectedStep||'не задано'}\n\nСообщение пользователя: ${userText}`} ]})
   });
   const payload=await response.json().catch(()=>({}));
   if(!response.ok) throw new Error(payload?.error?.message || `OpenRouter: ${response.status}`);
@@ -169,11 +174,16 @@ async function processUserText(text){
   }
   setLlmBusy(true);
   try{
-    const data=await callOpenRouter(text,flow?.candidate||{});
+    const expectedStep=flow?.step||'';
+    const data=await callOpenRouter(text,flow?.candidate||{},expectedStep);
     if(!flow){
       flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',channel:'',segment:'',status:'Черновик'},original:text};
     }
     mergeLlmCandidate(data);
+    if(expectedStep && !data[expectedStep]){
+      handleFlowAnswer(text);
+      return;
+    }
     flow.step=''; flow.options=[]; save();
     continueFlow();
   }catch(err){
@@ -187,7 +197,7 @@ async function testLlmConnection(){
   if(!getLlmKey()){ toast('Сначала сохрани API key'); return; }
   if(btn){btn.disabled=true;btn.textContent='Проверяю…';}
   try{
-    await callOpenRouter('Создай драйвер количества клиентов по ипотеке',{});
+    await callOpenRouter('Создай драйвер количества клиентов по ипотеке',{},'');
     toast('LLM отвечает');
     document.getElementById('llmMeta').textContent=`Модель: ${LLM_MODEL} · соединение проверено`;
   }catch(err){ toast(`Ошибка: ${err.message}`); }
@@ -196,9 +206,16 @@ async function testLlmConnection(){
 
 function startFlow(text) {
   const detected = detect(text);
-  flow = { step:'', candidate:{ ...detected, unit: unitFor(detected.indicator), base:'', cost:'', status:'Черновик' }, original:text };
+  flow = { step:'', candidate:{ ...detected, unit: unitFor(detected.indicator), base:'', cost:'', channel:'', segment:'', status:'Черновик' }, original:text };
   save();
   continueFlow();
+}
+function rejectUnknownProduct(product) {
+  const value=String(product||'').trim();
+  if(!value || PRODUCTS.includes(value)) return false;
+  addMessage('agent', `Продукт «${value}» не найден в справочнике. Создание драйвера завершено.`);
+  flow=null; save(); renderContextActions(); renderProgress();
+  return true;
 }
 function continueFlow() {
   if (!flow) return;
@@ -206,6 +223,7 @@ function continueFlow() {
   if (!c.indicator) return ask('indicator', 'Какой показатель должен лежать в основе драйвера?', INDICATORS);
   c.unit = unitFor(c.indicator);
   if (!c.product) return ask('product', 'К какому продукту относится драйвер?', PRODUCTS);
+  if (rejectUnknownProduct(c.product)) return;
 
   if (!flow.duplicateChecked) {
     flow.duplicateChecked = true;
@@ -312,11 +330,21 @@ function renderRegistry() {
   const list=drivers.filter(d=>!q || [d.name,d.indicator,d.product,d.effectType,d.status].join(' ').toLowerCase().includes(q));
   const el=document.getElementById('driverList');
   if (!list.length) { el.innerHTML='<div class="empty">Ничего не найдено</div>'; return; }
-  el.innerHTML=list.map(d=>`<article class="driver-card" data-driver-id="${d.id}">
-    <header><div><div class="mini-label">${escapeHtml(d.effectType)}</div><h3>${escapeHtml(d.name)}</h3></div><span class="badge ${d.status==='Готов'?'ready':d.status==='Требует согласования'?'approval':''}">${escapeHtml(d.status)}</span></header>
-    <div class="cost-line"><strong>${escapeHtml(d.cost||'—')} ₽</strong><span>за ${escapeHtml(baseLabel(d.base))}</span></div>
-    <div class="meta-grid">${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('База стоимости',baseLabel(d.base))}${meta('Единица измерения',d.unit)}</div>
-  </article>`).join('');
+  el.innerHTML=`<div class="registry-table"><div class="registry-head"><span>Драйвер</span><span>Стоимость</span><span>Статус</span></div>${list.map(d=>{
+    const expanded=expandedDriverId===d.id;
+    return `<div class="registry-item ${expanded?'expanded':''}" data-driver-id="${d.id}">
+      <button class="registry-row" type="button" aria-expanded="${expanded}">
+        <span class="registry-main"><strong>${escapeHtml(d.name)}</strong><small>${escapeHtml(d.effectType)} · ${escapeHtml(d.product)}</small><small class="registry-cost-mobile">${escapeHtml(d.cost||'—')} ₽ за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
+        <span class="registry-cost"><strong>${escapeHtml(d.cost||'—')} ₽</strong><small>за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
+        <span class="badge ${d.status==='Готов'?'ready':d.status==='Требует согласования'?'approval':''}">${escapeHtml(d.status)}</span>
+        <i class="row-chevron">⌄</i>
+      </button>
+      <div class="registry-expanded" ${expanded?'':'hidden'}>
+        <div class="meta-grid">${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${meta('Канал',d.channel||'—')}${meta('Сегмент',d.segment||'—')}</div>
+        <button class="edit-driver-button" type="button" data-edit-driver="${d.id}">Открыть карточку</button>
+      </div>
+    </div>`;
+  }).join('')}</div>`;
 }
 function meta(label,value){ return `<div class="meta"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`; }
 function updateSummary(){
@@ -381,7 +409,15 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   else if(action==='restart'){ const original=flow.original; flow=null; save(); addMessage('agent','Хорошо. Напиши уточнённый запрос заново — текущую карточку я не создал.'); document.getElementById('prompt').value=original; document.getElementById('prompt').focus(); renderContextActions(); renderProgress(); }
 });
 document.getElementById('registrySearch').addEventListener('input',renderRegistry);
-document.getElementById('driverList').addEventListener('click',e=>{const card=e.target.closest('[data-driver-id]');if(card)openDriver(card.dataset.driverId);});
+document.getElementById('driverList').addEventListener('click',e=>{
+  const edit=e.target.closest('[data-edit-driver]');
+  if(edit){ e.stopPropagation(); openDriver(edit.dataset.editDriver); return; }
+  const row=e.target.closest('.registry-row');
+  if(!row)return;
+  const item=row.closest('[data-driver-id]');
+  expandedDriverId=expandedDriverId===item.dataset.driverId ? null : item.dataset.driverId;
+  renderRegistry();
+});
 document.getElementById('backToRegistry').addEventListener('click',closeDriver);
 document.getElementById('driverForm').addEventListener('submit',e=>{
   e.preventDefault(); const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
@@ -416,6 +452,23 @@ document.getElementById('clearLlmKey').addEventListener('click',()=>{
 document.getElementById('toggleKey').addEventListener('click',e=>{
   const input=document.getElementById('llmKey'); const show=input.type==='password'; input.type=show?'text':'password'; e.target.textContent=show?'Скрыть':'Показать';
 });
+function endCurrentSession(){
+  const meaningful=messages.filter(m=>m.id!=='hello');
+  if(meaningful.length){
+    const history=load(SESSION_HISTORY_KEY,[]);
+    history.unshift({id:String(Date.now()),endedAt:new Date().toISOString(),messages:clone(messages)});
+    localStorage.setItem(SESSION_HISTORY_KEY,JSON.stringify(history.slice(0,20)));
+  }
+  flow=null; messages=clone(seedMessages); save(); renderMessages(); renderContextActions(); renderProgress();
+  document.getElementById('prompt').value='';
+  toast('Сессия завершена');
+  window.scrollTo({top:0,behavior:'smooth'});
+}
+document.getElementById('endSession').addEventListener('click',()=>{
+  if(messages.length<=1 && !flow){ toast('Сессия уже пустая'); return; }
+  if(confirm('Завершить текущую сессию? Переписка сохранится локально, а чат очистится.')) endCurrentSession();
+});
+
 document.getElementById('resetButton').addEventListener('click',()=>{
   if(!confirm('Сбросить реестр, диалог и незавершённое создание?'))return;
   drivers=clone(seedDrivers);messages=clone(seedMessages);flow=null;save();renderAll();toast('Демо-данные восстановлены');

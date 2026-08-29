@@ -943,6 +943,8 @@ function openDriver(id){
   const modelTitle=DRIVER_MODELS[d.modelId]?.title||availableModel(d)?.title;
   const modelOpt=calcSelect.querySelector('option[value="model"]'); if(modelOpt) modelOpt.textContent=modelTitle?`Модель «${modelTitle}»`:'По готовой модели';
   calcSelect.value=d.calcMethod || (d.costMode==='single'?'manual':d.costFormula?'rule':'manual');
+  const sourceSelect=document.getElementById('editModelSource');
+  if(sourceSelect) sourceSelect.value=(d.calcMethod==='model' && d.modelParams?.sources)?'forecast':'manual';
   document.getElementById('editChannelWrap').hidden=!d.channel;
   document.getElementById('editSegmentWrap').hidden=!d.segment;
   document.getElementById('editCost').value=d.costMode==='single'?(d.cost||''):'';
@@ -1043,7 +1045,8 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
   const selectedUnit=document.getElementById('editUnit').value;
   const unit=selectedUnit==='other' ? document.getElementById('editUnitOther').value.trim() : selectedUnit;
   if(!unit){ toast('Укажи единицу измерения'); return; }
-  const modelParams=calcMethod==='model'?{...(d.modelParams||{}),avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),creditTermYears:document.getElementById('editCreditTermYears').value.trim(),conversion:document.getElementById('editConversion').value.trim(),horizon:Number(document.getElementById('editHorizon').value||costProfile.length||0)}:null;
+  const modelSource=document.getElementById('editModelSource')?.value||'forecast';
+  const modelParams=calcMethod==='model'?{avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),creditTermYears:document.getElementById('editCreditTermYears').value.trim(),conversion:document.getElementById('editConversion').value.trim(),horizon:Number(document.getElementById('editHorizon').value||0),sources:modelSource==='forecast'?{avgCheck:'Прогнозная модель',margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель',conversion:'Прогнозная модель'}:null,sourcePeriod:modelSource==='forecast'?'Среднее за последние 3 месяца прогнозного года':''}:null;
   const updatedIndicator=document.getElementById('editIndicator').value.trim(), updatedProduct=document.getElementById('editProduct').value.trim(), updatedChannel=document.getElementById('editChannel').value.trim(), updatedSegment=document.getElementById('editSegment').value.trim();
   Object.assign(d,{name:buildDriverName({indicator:updatedIndicator,product:updatedProduct,channel:updatedChannel,segment:updatedSegment}),indicator:updatedIndicator,product:updatedProduct,effectType:document.getElementById('editEffectType').value,unit,channel:updatedChannel,segment:updatedSegment,base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?(availableModel({indicator:updatedIndicator,product:updatedProduct})?.id||d.modelId||''):'' ,modelParams,plAllocations:editedAllocations,incrementMode:document.getElementById('editIncrementMode').value,status});
   if(calcMethod==='model'){
@@ -1066,18 +1069,32 @@ function syncCostEditor(){
   document.getElementById('avgCheckWrap').hidden=!(model?.id==='credit_income_v2' && document.getElementById('editIndicator').value.trim()==='Количество выдач');
   document.getElementById('creditParamsWrap').hidden=model?.id!=='credit_income_v2';
   document.getElementById('conversionWrap').hidden=model?.id!=='insurance_income_v1';
-  const sourceNote=document.getElementById('modelSourceNote'); if(sourceNote && isModel) sourceNote.textContent='Источник: прогнозная модель · среднее за последние 3 месяца прогнозного года.';
-  if(document.getElementById('editHorizon')) document.getElementById('editHorizon').readOnly=true;
-  const sourceLocked = isModel && !!(document.getElementById('editId')?.value && drivers.find(x=>x.id===document.getElementById('editId').value)?.modelParams?.sources);
+
+  const sourceSelect=document.getElementById('editModelSource');
+  const sourceMode=sourceSelect?.value || ((currentDriver?.modelParams?.sources)?'forecast':'manual');
+  const sourceNote=document.getElementById('modelSourceNote');
+  if(sourceNote && isModel) sourceNote.textContent=sourceMode==='forecast'?'Источник: прогнозная модель · среднее за последние 3 месяца прогнозного года.':'Источник: ручной ввод.';
+  const sourceLocked=isModel && sourceMode==='forecast';
   ['editAvgCheck','editMargin','editRisk','editRepayment','editCreditTermYears','editConversion'].forEach(id=>{ const x=document.getElementById(id); if(x) x.readOnly=sourceLocked; });
+
+  const calcDisplay=document.getElementById('editCalcMethodDisplay');
+  const calcSelect=document.getElementById('editCalcMethod');
+  if(calcDisplay){ calcDisplay.hidden=!isModel; calcDisplay.textContent=model?`Модель «${model.title}»`:'Модель расчёта'; }
+  if(calcSelect) calcSelect.hidden=isModel;
+
+  const incSelect=document.getElementById('editIncrementMode');
+  const incDisplay=document.getElementById('editIncrementModeDisplay');
+  if(incDisplay){ incDisplay.hidden=!isModel; incDisplay.textContent=incSelect?.value==='step'?'Ступенькой с месяца начала эффекта':'Годовой инкремент распределяется по месяцам'; }
+  if(incSelect) incSelect.hidden=isModel;
+
   const business=document.getElementById('businessLogicSection'); if(business) business.hidden=isModel;
   const modelLink=document.getElementById('detailModelLink'); if(modelLink){ modelLink.hidden=!isModel; modelLink.dataset.openModel=model?.id||''; modelLink.textContent=model?`Открыть модель «${model.title}»`:'Открыть модель'; }
-  // В модельном драйвере методика и аналитика фиксированы: пользователь корректирует только исходные значения модели.
   ['editName','editIndicator','editProduct','editChannel','editSegment'].forEach(id=>{ const x=document.getElementById(id); if(x) x.readOnly=isModel; });
-  ['editEffectType','editUnit','editBase','editCalcMethod','editIncrementMode'].forEach(id=>{ const x=document.getElementById(id); if(x) x.disabled=isModel; });
+  ['editEffectType','editUnit','editBase'].forEach(id=>{ const x=document.getElementById(id); if(x) x.disabled=isModel; });
   updateProfileTotal();
 }
 document.getElementById('editCalcMethod').addEventListener('change',syncCostEditor);
+document.getElementById('editModelSource')?.addEventListener('change',syncCostEditor);
 document.getElementById('editCreditTermYears')?.addEventListener('input',()=>{
   const term=moneyNumber(document.getElementById('editCreditTermYears').value);
   document.getElementById('editHorizon').value=term?Math.min(36,Math.round(term*12)):'';

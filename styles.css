@@ -176,3 +176,11 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
   .pl-dict-table td{font-size:11px}
   .pl-dict-table .table-status{font-size:8px;padding:4px 6px}
 }
+
+/* v4.6 card cleanup */
+.static-field{width:100%;min-height:48px;display:flex;align-items:center;background:#0b1221;color:#f3f6ff;border:1px solid #202b49;border-radius:12px;padding:12px;font-size:14px;line-height:1.3;white-space:normal;overflow-wrap:anywhere}
+.source-control{margin-top:10px!important}.source-control select{height:48px!important}
+.model-params .form-grid{grid-template-columns:repeat(2,minmax(0,1fr));align-items:start}.model-params .form-grid label{min-width:0}.model-params input{width:100%;min-width:0}
+.increment-details{background:#11192b;border:1px solid #222e4e;border-radius:17px;padding:0 14px}.increment-details summary{cursor:pointer;padding:14px 0;color:#aeb8d4;font-size:13px;font-weight:800;list-style-position:inside}.increment-detail-body{padding:0 0 14px}.increment-detail-body label{margin:0!important}
+.detail-title h2{overflow-wrap:anywhere;word-break:normal}
+@media(max-width:430px){.model-params .form-grid{grid-template-columns:1fr}.driver-form label{min-width:0}.static-field{font-size:13px}.increment-details summary{font-size:12px}}

@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=4.5" />
+  <link rel="stylesheet" href="styles.css?v=4.6" />
   <title>Driver Agent</title>
 </head>
 <body class="auth-pending">
@@ -40,7 +40,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <div class="top-actions"><span class="version-pill">v4.5</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
+      <div class="top-actions"><span class="version-pill">v4.6</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
     </header>
 
     <section class="summary-card">
@@ -89,7 +89,7 @@
           <input type="hidden" id="editId" />
           <div class="form-section">
             <h3>Основное</h3>
-            <label>Название<input id="editName" required /></label>
+            <input type="hidden" id="editName" />
             <label>Показатель<input id="editIndicator" required /></label>
             <label>Продукт<input id="editProduct" required /></label>
             <div class="form-grid analytics-grid">
@@ -111,10 +111,12 @@
                 <input id="editUnitOther" class="conditional-field" placeholder="Укажи единицу измерения" hidden />
               </label>
               <label>База расчёта<select id="editBase"><option value="">Не выбрана</option><option value="1">1</option><option value="1000">1 000</option><option value="1000000">1 млн</option><option value="1000000000">1 млрд</option></select></label>
-              <label>Способ расчёта<select id="editCalcMethod"><option value="model">По готовой модели</option><option value="rule">По заданному правилу</option><option value="manual">Ручной ввод</option></select></label><details class="advanced-details profile-field"><summary>Правило применения инкремента</summary><label>Как применяется годовой инкремент<select id="editIncrementMode"><option value="step">Ступенькой с месяца начала эффекта</option><option value="annual_spread">Годовой инкремент распределяется по месяцам</option></select><span class="field-hint">Изменение задаётся отдельно на каждый год. Месяц начала эффекта применяется только к первому году.</span></label></details>
+              <label id="calcMethodWrap">Способ расчёта<select id="editCalcMethod"><option value="model">По готовой модели</option><option value="rule">По заданному правилу</option><option value="manual">Ручной ввод</option></select><div id="editCalcMethodDisplay" class="static-field" hidden></div></label>
               <label id="singleCostWrap" hidden>Эффект, ₽<input id="editCost" inputmode="decimal" /></label>
               <div id="modelParamsWrap" class="profile-field model-params" hidden>
-                <div class="field-title">Исходные значения для расчёта</div><div id="modelSourceNote" class="source-note"></div>
+                <div class="field-title">Исходные значения для расчёта</div>
+                <label class="source-control">Источник исходных значений<select id="editModelSource"><option value="forecast">Прогнозная модель</option><option value="manual">Ручной ввод</option></select></label>
+                <div id="modelSourceNote" class="source-note"></div>
                 <div id="creditParamsWrap" class="form-grid">
                   <label id="avgCheckWrap">Средний чек, ₽<input id="editAvgCheck" inputmode="decimal" /></label>
                   <label>Маржа, % годовых<input id="editMargin" inputmode="decimal" /></label>
@@ -125,8 +127,7 @@
                 <div id="conversionWrap" class="form-grid" hidden>
                   <label>Коэффициент перевода сборов в ОД, %<input id="editConversion" inputmode="decimal" /></label>
                 </div>
-                <div class="form-grid"><label>Горизонт расчёта, мес.<input id="editHorizon" inputmode="numeric" min="1" max="36" readonly /></label></div>
-                <span class="field-hint">Годовые ставки календаризуются системой по фактическому числу дней месяца.</span>
+                <input type="hidden" id="editHorizon" />
                 <button id="recalcModel" type="button" class="secondary-button inline-button">Пересчитать</button>
                 <button id="detailModelLink" type="button" class="secondary-button inline-button" hidden>Открыть модель</button>
               </div>
@@ -151,6 +152,16 @@
             <h3>Бизнес-смысл</h3>
             <label>Описание логики / бизнес-смысл<textarea id="editBusinessRationale" rows="3" placeholder="Например: доход снижается по мере погашения кредитного портфеля"></textarea></label>
           </div>
+
+          <details class="advanced-details increment-details">
+            <summary>Правило применения инкремента</summary>
+            <div class="increment-detail-body">
+              <label id="incrementModeWrap">Как применяется годовой инкремент
+                <select id="editIncrementMode"><option value="step">Ступенькой с месяца начала эффекта</option><option value="annual_spread">Годовой инкремент распределяется по месяцам</option></select>
+                <div id="editIncrementModeDisplay" class="static-field" hidden></div>
+              </label>
+            </div>
+          </details>
 
           <div class="form-section">
             <h3>Статус</h3>
@@ -211,6 +222,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=4.5"></script>
+  <script src="app.js?v=4.6"></script>
 </body>
 </html>

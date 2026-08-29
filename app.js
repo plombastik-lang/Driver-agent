@@ -3,6 +3,7 @@ const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 const LLM_KEY_STORAGE = 'driver-agent.pwa.openrouter-key.v1';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
+const INDICATOR_REGISTRY_KEY = 'driver-agent.pwa.indicators.v1';
 const LLM_MODEL = 'openrouter/free';
 
 const INDICATOR_META = {
@@ -15,7 +16,9 @@ const INDICATOR_META = {
   'Доля рынка': '%',
   'Уровень проникновения': '%'
 };
-const INDICATORS = Object.keys(INDICATOR_META);
+let indicatorRegistry = load(INDICATOR_REGISTRY_KEY, Object.entries(INDICATOR_META).map(([name,unit])=>({name,unit,status:'Активен'})));
+function indicatorNames(){ return indicatorRegistry.map(x=>x.name); }
+function indicatorRecord(name){ const c=canonicalFromList(name, indicatorNames()); return c ? indicatorRegistry.find(x=>x.name===c) : null; }
 const PRODUCTS = ['Ипотека','Кредитование','Страхование','Карты','Вклады','Бонусная программа','Общий'];
 
 const seedDrivers = [{
@@ -64,6 +67,7 @@ function save() {
   localStorage.setItem(REGISTRY_KEY, JSON.stringify(drivers));
   localStorage.setItem(MESSAGES_KEY, JSON.stringify(messages));
   localStorage.setItem(FLOW_KEY, JSON.stringify(flow));
+  localStorage.setItem(INDICATOR_REGISTRY_KEY, JSON.stringify(indicatorRegistry));
 }
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
@@ -109,8 +113,8 @@ function canonicalFromList(value, list) {
   return list.find(x=>x.toLowerCase()===raw.toLowerCase()) || null;
 }
 function unitFor(indicator) {
-  const canonical=canonicalFromList(indicator, INDICATORS);
-  return canonical ? INDICATOR_META[canonical] : null;
+  const rec=indicatorRecord(indicator);
+  return rec ? rec.unit : null;
 }
 function exactDuplicate(c) {
   return drivers.find(d => d.indicator.toLowerCase() === c.indicator?.toLowerCase() && d.product.toLowerCase() === c.product?.toLowerCase());
@@ -178,7 +182,7 @@ async function callOpenRouter(userText, candidate={}, expectedStep=''){
   if(!key) throw new Error('LLM_KEY_MISSING');
   const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Извлекай параметры из сообщения пользователя и не выдумывай то, чего нет в тексте.
 
-Показатели из справочника: ${INDICATORS.join(', ')}. Если смысл точно соответствует одному из них, используй точное название из справочника. Если пользователь явно называет другой показатель, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный показатель похожим. В частности: «доля рынка» = «Доля рынка», «уровень проникновения» = «Уровень проникновения», «объём выдач» = «Объём выдач».
+Показатели из справочника: ${indicatorNames().join(', ')}. Если смысл точно соответствует одному из них, используй точное название из справочника. Если пользователь явно называет другой показатель, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный показатель похожим. В частности: «доля рынка» = «Доля рынка», «уровень проникновения» = «Уровень проникновения», «объём выдач» = «Объём выдач».
 Продукт должен быть только из справочника: ${PRODUCTS.join(', ')}. Если в сообщении указан другой продукт, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный продукт похожим.
 Тип эффекта: Доходы или Расходы. База стоимости: 1, 1000, 1000000 или 1000000000. Единицу измерения НЕ определяй: она является атрибутом показателя и берётся приложением только из справочника показателей.
 
@@ -249,14 +253,12 @@ function startFlow(text) {
   save();
   continueFlow();
 }
-function rejectUnknownIndicator(indicator) {
+function checkIndicator(indicator) {
   const value=String(indicator||'').trim();
-  if(!value) return false;
-  const canonical=canonicalFromList(value, INDICATORS);
-  if(canonical){ flow.candidate.indicator=canonical; flow.candidate.unit=unitFor(canonical); return false; }
-  addMessage('agent', `Показатель «${value}» не найден в справочнике. Создание драйвера завершено.`);
-  flow=null; save(); renderContextActions(); renderProgress();
-  return true;
+  if(!value) return 'missing';
+  const rec=indicatorRecord(value);
+  if(rec){ flow.candidate.indicator=rec.name; flow.candidate.unit=rec.unit; flow.candidate.newIndicator=false; return 'found'; }
+  flow.candidate.indicator=value; flow.candidate.newIndicator=true; return 'new';
 }
 function rejectUnknownProduct(product) {
   const value=String(product||'').trim();
@@ -270,9 +272,15 @@ function rejectUnknownProduct(product) {
 function continueFlow() {
   if (!flow) return;
   const c = flow.candidate;
-  if (!c.indicator) return ask('indicator', 'Какой показатель должен лежать в основе драйвера?', INDICATORS);
-  if (rejectUnknownIndicator(c.indicator)) return;
-  c.unit = unitFor(c.indicator);
+  if (!c.indicator) return ask('indicator', 'Какой показатель должен лежать в основе драйвера?', indicatorNames());
+  const indicatorState=checkIndicator(c.indicator);
+  if(indicatorState==='new' && !flow.newIndicatorConfirmed){
+    flow.step='newIndicator'; save();
+    addMessage('agent', `Показатель «${c.indicator}» не найден в справочнике. Я могу подготовить новый показатель по правилам справочника и создать драйвер на его основе. Драйвер будет направлен методологу на согласование. Продолжить?`);
+    renderContextActions(); renderProgress(); return;
+  }
+  if(c.newIndicator && !c.unit) return ask('unit','Укажи единицу измерения нового показателя.',['шт.','₽','%','Другое']);
+  if(!c.newIndicator) c.unit = unitFor(c.indicator);
   if (!c.product) return ask('product', 'К какому продукту относится драйвер?', PRODUCTS);
   if (rejectUnknownProduct(c.product)) return;
 
@@ -300,6 +308,8 @@ function ask(step, text, options=[]) {
 function handleFlowAnswer(text) {
   const c = flow.candidate;
   if (flow.step === 'indicator') c.indicator = text.trim();
+  else if (flow.step === 'unit') { if(text.trim()==='Другое') return ask('unitCustom','Напиши единицу измерения нового показателя.'); c.unit=text.trim(); }
+  else if (flow.step === 'unitCustom') c.unit=text.trim();
   else if (flow.step === 'product') c.product = text.trim();
   else if (flow.step === 'effectType') c.effectType = normalizeEffect(text);
   else if (flow.step === 'base') c.base = normalizeBaseAnswer(text);
@@ -343,9 +353,11 @@ ${c.name}
 }
 function finalizeDriver() {
   const c=flow.candidate;
-  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, channel:c.channel||'', segment:c.segment||'', status:'Черновик' };
+  let indicator=indicatorRecord(c.indicator);
+  if(!indicator){ indicator={name:c.indicator,unit:c.unit,status:'Подготовлен'}; indicatorRegistry.push(indicator); }
+  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, channel:c.channel||'', segment:c.segment||'', status:'На согласовании' };
   drivers.unshift(driver); flow=null; save(); renderRegistry(); updateSummary(); renderProgress(); renderContextActions();
-  addMessage('agent', `Готово. «${driver.name}» создан в реестре со статусом «Черновик». Нажми на него в реестре, если нужно изменить параметры или перевести в другой статус.`);
+  addMessage('agent', `Готово. «${driver.name}» создан и направлен методологу на согласование.${indicator.status==='Подготовлен' ? ` Новый показатель «${indicator.name}» автоматически подготовлен по правилам справочника.` : ''}`);
   toast('Драйвер создан');
 }
 function cancelFlow() {
@@ -360,7 +372,9 @@ function renderMessages() {
 function renderContextActions() {
   const el=document.getElementById('contextActions');
   if (!flow) { el.innerHTML=''; return; }
-  if (flow.step==='duplicate') {
+  if(flow.step==='newIndicator'){
+    el.innerHTML=`<button data-flow-action="confirmNewIndicator">Продолжить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='duplicate') {
     el.innerHTML=`<button data-flow-action="useExisting">Открыть существующий</button><button data-flow-action="createAnyway" class="secondary">Создать новый</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='preview') {
     el.innerHTML=`<button data-flow-action="confirm">✓ Создать</button><button data-flow-action="restart" class="secondary">Изменить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
@@ -387,7 +401,7 @@ function renderRegistry() {
       <button class="registry-row" type="button" aria-expanded="${expanded}">
         <span class="registry-main"><strong>${escapeHtml(d.name)}</strong><small class="registry-cost-mobile">${escapeHtml(d.cost||'—')} ₽ за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
         <span class="registry-cost"><strong>${escapeHtml(d.cost||'—')} ₽</strong><small>за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
-        <span class="badge ${d.status==='Готов'?'ready':d.status==='Требует согласования'?'approval':''}">${escapeHtml(d.status)}</span>
+        <span class="badge ${d.status==='Готов'?'ready':['Требует согласования','На согласовании'].includes(d.status)?'approval':''}">${escapeHtml(d.status)}</span>
         <i class="row-chevron">⌄</i>
       </button>
       <div class="registry-expanded" ${expanded?'':'hidden'}>
@@ -404,9 +418,9 @@ function updateSummary(){
   document.getElementById('readyCount').textContent=drivers.filter(d=>d.status==='Готов').length;
 }
 function renderDictionaries(){
-  document.getElementById('indicatorDict').innerHTML=INDICATORS.map(x=>`<tr><td>${escapeHtml(x)}</td><td>${escapeHtml(INDICATOR_META[x]||'—')}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  document.getElementById('indicatorDict').innerHTML=indicatorRegistry.map(x=>`<tr><td>${escapeHtml(x.name)}</td><td>${escapeHtml(x.unit||'—')}</td><td><span class="table-status ${x.status==='Подготовлен'?'approval':''}">${escapeHtml(x.status)}</span></td></tr>`).join('');
   document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
-  document.getElementById('indicatorCount').textContent=`${INDICATORS.length} записей`;
+  document.getElementById('indicatorCount').textContent=`${indicatorRegistry.length} записей`;
   document.getElementById('productCount').textContent=`${PRODUCTS.length} записей`;
 }
 function switchTab(name){
@@ -433,7 +447,8 @@ function openDriver(id){
   document.getElementById('editCost').value=d.cost||'';
   document.getElementById('editStatus').value=d.status;
   document.getElementById('detailHeading').textContent=d.name;
-  const badge=document.getElementById('detailBadge'); badge.textContent=d.status; badge.className='badge '+(d.status==='Готов'?'ready':d.status==='Требует согласования'?'approval':'');
+  document.getElementById('approveDriver').hidden=d.status!=='На согласовании';
+  const badge=document.getElementById('detailBadge'); badge.textContent=d.status; badge.className='badge '+(d.status==='Готов'?'ready':['Требует согласования','На согласовании'].includes(d.status)?'approval':'');
   document.getElementById('registryListView').hidden=true;
   document.getElementById('driverDetailView').hidden=false;
   window.scrollTo({top:0,behavior:'smooth'});
@@ -453,6 +468,7 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   const value=e.target.dataset.flowValue; const action=e.target.dataset.flowAction;
   if(value){ addMessage('user',value); handleFlowAnswer(value); return; }
   if(action==='cancel') cancelFlow();
+  else if(action==='confirmNewIndicator'){ flow.newIndicatorConfirmed=true; flow.step=''; save(); continueFlow(); }
   else if(action==='confirm') finalizeDriver();
   else if(action==='createAnyway'){ flow.duplicateId=null; flow.step=''; save(); continueFlow(); }
   else if(action==='useExisting'){ const id=flow.duplicateId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
@@ -469,6 +485,12 @@ document.getElementById('driverList').addEventListener('click',e=>{
   renderRegistry();
 });
 document.getElementById('backToRegistry').addEventListener('click',closeDriver);
+document.getElementById('approveDriver').addEventListener('click',()=>{
+  const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
+  if(!String(d.cost||'').trim()){ toast('Сначала укажи стоимость'); return; }
+  d.status='Готов'; const ind=indicatorRecord(d.indicator); if(ind && ind.status==='Подготовлен') ind.status='Активен';
+  save(); renderAll(); openDriver(id); toast('Драйвер согласован');
+});
 document.getElementById('driverForm').addEventListener('submit',e=>{
   e.preventDefault(); const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
   const cost=document.getElementById('editCost').value.trim();

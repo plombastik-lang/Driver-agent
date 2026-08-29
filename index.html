@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=2.9" />
+  <link rel="stylesheet" href="styles.css?v=3.0" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v2.9</span>
+      <span class="version-pill">v3.0</span>
     </header>
 
     <section class="summary-card">
@@ -99,7 +99,7 @@
           </div>
           <div class="form-section">
             <h3>Статус</h3>
-            <label>Статус<select id="editStatus"><option>Черновик</option><option>Требует согласования</option><option>Готов</option></select></label><p class="status-hint">Статус «Готов» доступен только при заполненной стоимости.</p>
+            <label>Статус<select id="editStatus" disabled><option>Черновик</option><option>На согласовании</option><option>Готов</option></select></label><p class="status-hint">Статус управляется процессом согласования. Методолог согласует драйвер целиком; подготовленный показатель активируется автоматически.</p><button type="button" id="approveDriver" class="primary">Согласовать драйвер</button>
           </div>
           <div class="detail-actions">
             <button type="submit" class="primary">Сохранить изменения</button>
@@ -141,6 +141,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=2.9"></script>
+  <script src="app.js?v=3.0"></script>
 </body>
 </html>

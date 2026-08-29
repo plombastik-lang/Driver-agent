@@ -1,4 +1,4 @@
-const REGISTRY_KEY = 'driver-agent.pwa.registry.v4';
+const REGISTRY_KEY = 'driver-agent.pwa.registry.v5';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
@@ -28,32 +28,32 @@ const PL_ARTICLES = ['Чистый процентный доход','Расхо�
 const seedDrivers = [
   {
     id:'demo-credit-volume-mortgage', name:'Объём выдач — Ипотечное кредитование', indicator:'Объём выдач', product:'Ипотечное кредитование',
-    unit:'₽', effectType:'Доходы', base:'1000000000', channel:'', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
-    modelParams:{margin:'12',risk:'2.4',repayment:'2',horizon:36,sources:{margin:'Модель планирования и прогнозирования',risk:'Модель планирования и прогнозирования',repayment:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    unit:'₽', effectType:'Доходы', base:'1000000', channel:'', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
+    modelParams:{margin:'12',risk:'2.4',repayment:'2',horizon:36,sources:{margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
     costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
   },
   {
     id:'demo-credit-count-consumer', name:'Количество выдач — Потребительский кредит', indicator:'Количество выдач', product:'Потребительский кредит',
-    unit:'шт.', effectType:'Доходы', base:'1000', channel:'Онлайн', segment:'Массовый', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
-    modelParams:{avgCheck:'650000',margin:'14',risk:'4',repayment:'4',horizon:24,sources:{avgCheck:'Модель планирования и прогнозирования',margin:'Модель планирования и прогнозирования',risk:'Модель планирования и прогнозирования',repayment:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    unit:'шт.', effectType:'Доходы', base:'1', channel:'Онлайн', segment:'Массовый', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
+    modelParams:{avgCheck:'650000',margin:'14',risk:'4',repayment:'4',horizon:24,sources:{avgCheck:'Прогнозная модель',margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
     costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
   },
   {
     id:'demo-credit-volume-auto', name:'Объём выдач — Автокредит', indicator:'Объём выдач', product:'Автокредит',
-    unit:'₽', effectType:'Доходы', base:'1000000000', channel:'Партнёрский', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
-    modelParams:{margin:'11',risk:'3',repayment:'3',horizon:24,sources:{margin:'Модель планирования и прогнозирования',risk:'Модель планирования и прогнозирования',repayment:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    unit:'₽', effectType:'Доходы', base:'1000000', channel:'Партнёрский', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
+    modelParams:{margin:'11',risk:'3',repayment:'3',horizon:24,sources:{margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
     costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
   },
   {
     id:'demo-insurance-osago', name:'Объём сборов — ОСАГО', indicator:'Объём сборов', product:'ОСАГО',
     unit:'₽', effectType:'Доходы', base:'1000000', channel:'', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'insurance_income_v1',
-    modelParams:{conversion:'18',horizon:1,sources:{conversion:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    modelParams:{conversion:'18',horizon:1,sources:{conversion:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
     costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
   },
   {
     id:'demo-insurance-kasko', name:'Объём сборов — КАСКО', indicator:'Объём сборов', product:'КАСКО',
     unit:'₽', effectType:'Доходы', base:'1000000', channel:'Онлайн', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'insurance_income_v1',
-    modelParams:{conversion:'24',horizon:1,sources:{conversion:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    modelParams:{conversion:'24',horizon:1,sources:{conversion:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
     costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
   },
   {
@@ -240,6 +240,21 @@ const DRIVER_MODELS = {
 };
 function availableModel(c){
   return Object.values(DRIVER_MODELS).find(model=>model.products.includes(c?.product) && model.links.some(x=>x.indicator===c?.indicator)) || null;
+}
+function defaultModelBase(c, model=availableModel(c)){
+  if(!model) return '';
+  if(c?.indicator==='Количество выдач') return '1';
+  if(c?.unit==='₽' || ['Объём выдач','Объём сборов'].includes(c?.indicator)) return '1000000';
+  return '1';
+}
+function shortArticleName(article){
+  return ({'Чистый процентный доход':'ЧПД','Расходы на резервы':'Резервы','Чистый комиссионный доход':'ЧКД'})[article] || article;
+}
+function compactRub(v){
+  const n=moneyNumber(v), a=Math.abs(n);
+  if(a>=1000000) return `${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1}).format(n/1000000)} млн`;
+  if(a>=1000) return `${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1}).format(n/1000)} тыс.`;
+  return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:0}).format(n);
 }
 function daysInMonth(year,monthIndex){ return new Date(year,monthIndex+1,0).getDate(); }
 function daysInYear(year){ return ((year%4===0 && year%100!==0)||year%400===0)?366:365; }
@@ -496,10 +511,10 @@ function rejectUnknownProduct(product) {
 function defaultModelParams(c, model){
   if(model?.id==='credit_income_v2') return {
     avgCheck: c.indicator==='Количество выдач'?'1000000':'', margin:'2', risk:'1', repayment:'3', horizon:36,
-    sources:{avgCheck:'Модель планирования и прогнозирования',margin:'Модель планирования и прогнозирования',risk:'Модель планирования и прогнозирования',repayment:'Модель планирования и прогнозирования'},
-    sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'
+    sources:{avgCheck:'Прогнозная модель',margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель'},
+    sourcePeriod:'Среднее за последние 3 месяца прогнозного года'
   };
-  if(model?.id==='insurance_income_v1') return {conversion:'50',horizon:1,sources:{conversion:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'};
+  if(model?.id==='insurance_income_v1') return {conversion:'50',horizon:1,sources:{conversion:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'};
   return {};
 }
 function continueFlow() {
@@ -541,19 +556,17 @@ function continueFlow() {
   const model=availableModel(c);
   if(model?.effectType && !c.effectType){
     c.effectType=model.effectType;
-    if(!flow.autoEffectNotified){
-      flow.autoEffectNotified=true;
-      addMessage('agent', `Для модели «${model.title}» тип эффекта — «${model.effectType}». Определил его автоматически.`);
-    }
     save();
   }
   if (!c.effectType) return ask('effectType', 'Какой тип эффекта у драйвера?', ['Доходы','Расходы']);
 
   if(!c.calcMethod && model){
     flow.step='modelChoice'; flow.modelId=model.id; save();
-    addMessage('agent', `Для «${c.indicator} — ${c.product}» есть готовая модель «${model.title}» — ${model.calculation}. ${model.businessLogic} ${c.indicator==='Количество выдач'?'Для количества выдач объём сначала рассчитывается через средний чек.':''} Использовать её?`);
+    const extra=c.indicator==='Количество выдач'?' + средний чек':'';
+    addMessage('agent', `Есть модель «${model.title}». Параметры: ${model.id==='credit_income_v2'?`маржа, риск, погашение${extra}`:'коэффициент перевода сборов'}. Использовать её?`);
     renderContextActions(); renderProgress(); return;
   }
+  if(c.calcMethod==='model' && !c.base){ c.base=defaultModelBase(c,model); save(); }
   if (!c.base) return ask('base', 'Выбери базу, для которой рассчитываем эффект.', ['1','1 000','1 млн','1 млрд']);
 
   if(c.calcMethod==='model'){
@@ -574,16 +587,9 @@ function continueFlow() {
       const result=calculateModel(c); const profile=result.profile;
       c.costProfile=profile; c.plAllocations=result.allocations; c.cost=String(profileTotal(profile)); c.costLogicText=modelLogic(c); c.businessRationale=modelBusinessRationale(c);
       flow.step='modelConfirm'; save();
-      addMessage('agent', `Рассчитал по модели «${model.title}». Исходные значения получены из модели планирования и прогнозирования (${p.sourcePeriod||'целевой период'}). При необходимости их можно скорректировать в карточке драйвера.
-
-${c.costLogicText}
-
-${compactProfileLines(profile)}
-
-Статьи P&L:
-${(c.plAllocations||[]).map(a=>`• ${a.article}: ${formatMoney(profileTotal(a.profile||[]))} ₽`).join('\n')}
-
-Итого за ${profile.length} мес.: ${formatMoney(profileTotal(profile))} ₽
+      addMessage('agent', `Готово по модели «${model.title}»: ${profile.length} мес., итог ${formatMoney(profileTotal(profile))} ₽.
+Исходные значения — из прогнозной модели, среднее за последние 3 месяца прогнозного года.
+${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)}: ${formatMoney(profileTotal(a.profile||[]))} ₽`).join(' · ')}
 
 Подтвердить расчёт?`);
       renderContextActions(); renderProgress(); return;
@@ -702,21 +708,13 @@ function costSummary(d){
 function showPreview() {
   const c=flow.candidate; c.name = `${c.indicator} — ${c.product}`;
   flow.step='preview'; save();
-  const methodLabel=c.calcMethod==='model'?'По готовой модели':c.calcMethod==='rule'?'По заданному правилу':c.calcMethod==='manual'?'Ручной ввод':'Ручной ввод';
-  addMessage('agent', `Проверь карточку перед созданием:
-
-${c.name}
-Показатель: ${c.indicator}
-Продукт: ${c.product}
-Тип эффекта: ${c.effectType}
-База расчёта: ${baseLabel(c.base)}
-Способ расчёта: ${methodLabel}
-Применение годового инкремента: ${incrementModeLabel(c.incrementMode)}
-Статьи P&L: ${(c.plAllocations||[]).map(x=>x.article).join(', ')||'не указаны'}
-${c.costMode==='monthly' ? `Профиль эффекта: ${(c.costProfile||[]).length} мес.
-Итого за профиль: ${formatMoney(profileTotal(c.costProfile||[]))} ₽
-${c.costLogicText?`Логика расчёта: ${c.costLogicText}
-`:''}${c.businessRationale?`Бизнес-смысл: ${c.businessRationale}`:''}` : `Эффект: ${formatMoney(c.cost)} ₽`}`,'preview');
+  if(c.calcMethod==='model'){
+    const model=DRIVER_MODELS[c.modelId]||availableModel(c);
+    addMessage('agent', `Проверь перед созданием:\n\n${c.name}\nМодель: «${model?.title||'расчёта'}»\nРасчёт на: ${baseLabel(c.base)} ${c.unit}\nПрофиль: ${(c.costProfile||[]).length} мес.\nСтатьи: ${(c.plAllocations||[]).map(x=>x.article).join(', ')}\nИтого: ${formatMoney(profileTotal(c.costProfile||[]))} ₽`,'preview');
+  } else {
+    const methodLabel=c.calcMethod==='rule'?'По заданному правилу':'Ручной ввод';
+    addMessage('agent', `Проверь перед созданием:\n\n${c.name}\nСпособ расчёта: ${methodLabel}\nРасчёт на: ${baseLabel(c.base)} ${c.unit}\nСтатьи: ${(c.plAllocations||[]).map(x=>x.article).join(', ')||'не указаны'}\nИтого: ${formatMoney(profileTotal(c.costProfile||[]))} ₽`,'preview');
+  }
   renderContextActions(); renderProgress();
 }
 function finalizeDriver() {
@@ -787,8 +785,8 @@ function renderRegistry() {
         <i class="row-chevron">⌄</i>
       </button>
       <div class="registry-expanded" ${expanded?'':'hidden'}>
-        <div class="meta-grid">${meta('Способ расчёта',d.calcMethod==='model'?`Модель «${DRIVER_MODELS[d.modelId]?.title||availableModel(d)?.title||'расчёта'}»`:d.calcMethod==='rule'?'По заданному правилу':'Ручной ввод')}${meta('Профиль эффекта',(d.costMode==='monthly'||(d.costProfile||[]).length>1)?`${(d.costProfile||[]).length} мес. · итого ${formatMoney(profileTotal(d.costProfile||[]))} ₽`:'Одно значение')}${d.costLogicText?meta('Логика расчёта',d.costLogicText):''}${d.businessRationale?meta('Бизнес-смысл',d.businessRationale):''}${meta('Применение инкремента',incrementModeLabel(d.incrementMode||inferIncrementMode(d)))}${(d.plAllocations||[]).length?meta('Статьи P&L',(d.plAllocations||[]).map(x=>x.article).join(', ')):''}${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${meta('Канал',d.channel||'—')}${meta('Сегмент',d.segment||'—')}</div>
-        <button class="edit-driver-button" type="button" data-edit-driver="${d.id}">Открыть карточку</button>
+        <div class="meta-grid">${meta('Способ расчёта',d.calcMethod==='model'?`Модель «${DRIVER_MODELS[d.modelId]?.title||availableModel(d)?.title||'расчёта'}»`:d.calcMethod==='rule'?'По заданному правилу':'Ручной ввод')}${meta('Профиль эффекта',(d.costMode==='monthly'||(d.costProfile||[]).length>1)?`${(d.costProfile||[]).length} мес. · итого ${formatMoney(profileTotal(d.costProfile||[]))} ₽`:'Одно значение')}${d.calcMethod!=='model'&&d.costLogicText?meta('Логика расчёта',d.costLogicText):''}${d.calcMethod!=='model'&&d.businessRationale?meta('Бизнес-смысл',d.businessRationale):''}${meta('Применение инкремента',incrementModeLabel(d.incrementMode||inferIncrementMode(d)))}${(d.plAllocations||[]).length?meta('Статьи P&L',(d.plAllocations||[]).map(x=>x.article).join(', ')):''}${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${meta('Канал',d.channel||'—')}${meta('Сегмент',d.segment||'—')}</div>
+        <div class="registry-actions"><button class="edit-driver-button" type="button" data-edit-driver="${d.id}">Открыть карточку</button>${d.calcMethod==='model'?`<button class="secondary-button" type="button" data-open-model="${d.modelId}">О модели</button>`:''}</div>
       </div>
     </div>`;
   }).join('')}</div>`;
@@ -802,7 +800,7 @@ function updateSummary(){
 function renderDictionaries(){
   document.getElementById('indicatorDict').innerHTML=indicatorRegistry.map(x=>`<tr><td>${escapeHtml(x.name)}</td><td>${escapeHtml(x.unit||'—')}</td><td><span class="table-status ${x.status==='Подготовлен'?'approval':''}">${escapeHtml(x.status)}</span></td></tr>`).join('');
   document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
-  const modelRows=Object.values(DRIVER_MODELS).flatMap(model=>model.links.map(link=>`<tr><td><strong>${escapeHtml(model.title)}</strong><small class="model-subtitle">${escapeHtml(model.calculation)}</small><small class="model-logic">${escapeHtml(model.businessLogic)}</small></td><td>${escapeHtml(model.products.join(', '))}</td><td>${escapeHtml(link.indicator)}</td><td>${escapeHtml(link.params.join(', '))}</td><td>${escapeHtml(model.plArticles.join(', '))}</td></tr>`));
+  const modelRows=Object.values(DRIVER_MODELS).flatMap(model=>model.links.map(link=>`<tr data-model-id="${model.id}"><td><strong>${escapeHtml(model.title)}</strong><small class="model-subtitle">${escapeHtml(model.calculation)}</small><small class="model-logic">${escapeHtml(model.businessLogic)}</small></td><td>${escapeHtml(model.products.join(', '))}</td><td>${escapeHtml(link.indicator)}</td><td>${escapeHtml(link.params.join(', '))}</td><td>${escapeHtml(model.plArticles.join(', '))}</td></tr>`));
   const modelDict=document.getElementById('modelDict'); if(modelDict) modelDict.innerHTML=modelRows.join('');
   document.getElementById('indicatorCount').textContent=`${indicatorRegistry.length} записей`;
   document.getElementById('productCount').textContent=`${PRODUCTS.length} записей`;
@@ -829,10 +827,10 @@ function renderPlAllocationEditor(allocations=[]){
   const el=document.getElementById('editPlAllocations'); if(!el) return;
   const list=(allocations||[]); if(!list.length){ el.innerHTML='<div class="empty">Статьи пока не заданы</div>'; return; }
   const months=Math.max(...list.map(a=>(a.profile||[]).length),1);
-  const visible=Math.min(months,6);
+  const visible=Math.min(months,3);
   const isModel=document.getElementById('editCalcMethod')?.value==='model';
-  const rows=Array.from({length:months},(_,i)=>`<tr class="pl-month-row ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><td>Месяц ${i+1}</td>${list.map((a,idx)=>`<td><input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}" ${isModel?'readonly':''}></td>`).join('')}<td><strong>${formatMoney(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))} ₽</strong></td></tr>`).join('');
-  el.innerHTML=`<div class="pl-combined-wrap"><table class="pl-combined"><thead><tr><th>Период</th>${list.map(a=>`<th>${escapeHtml(a.article)}</th>`).join('')}<th>Итого</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th>${list.map(a=>`<th>${formatMoney(profileTotal(a.profile||[]))} ₽</th>`).join('')}<th>${formatMoney(profileTotal(profileFromPlAllocations(list)))} ₽</th></tr></tfoot></table></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
+  const rows=Array.from({length:months},(_,i)=>`<tr class="pl-month-row ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><td>${i+1}</td>${list.map((a,idx)=>`<td>${isModel?`<span class="pl-static">${compactRub(a.profile?.[i]??0)}</span>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</td>`).join('')}<td><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></td></tr>`).join('');
+  el.innerHTML=`<div class="pl-combined-wrap"><table class="pl-combined ${isModel?'model-table':''}"><thead><tr><th>Мес.</th>${list.map(a=>`<th title="${escapeHtml(a.article)}">${escapeHtml(shortArticleName(a.article))}</th>`).join('')}<th>Итого</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th>${list.map(a=>`<th>${compactRub(profileTotal(a.profile||[]))}</th>`).join('')}<th>${compactRub(profileTotal(profileFromPlAllocations(list)))}</th></tr></tfoot></table></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
   document.getElementById('togglePlMonths')?.addEventListener('click',e=>{ const hidden=[...el.querySelectorAll('.extra-month')].some(r=>r.hidden); el.querySelectorAll('.extra-month').forEach(r=>r.hidden=!hidden); e.currentTarget.textContent=hidden?'Скрыть лишние месяцы':'Показать все месяцы'; });
 }
 function getPlAllocationsFromEditor(){
@@ -928,6 +926,8 @@ document.getElementById('contextActions').addEventListener('click',e=>{
 });
 document.getElementById('registrySearch').addEventListener('input',renderRegistry);
 document.getElementById('driverList').addEventListener('click',e=>{
+  const modelLink=e.target.closest('[data-open-model]');
+  if(modelLink){ e.stopPropagation(); closeDriver(); switchTab('models'); const row=document.querySelector(`[data-model-id="${modelLink.dataset.openModel}"]`); if(row){ row.scrollIntoView({behavior:'smooth',block:'center'}); row.classList.add('model-highlight'); setTimeout(()=>row.classList.remove('model-highlight'),1800); } return; }
   const edit=e.target.closest('[data-edit-driver]');
   if(edit){ e.stopPropagation(); openDriver(edit.dataset.editDriver); return; }
   const row=e.target.closest('.registry-row');
@@ -963,21 +963,25 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
 function updateProfileTotal(){ const p=getProfileFromEditor(); const el=document.getElementById('editProfileTotal'); if(el) el.textContent=p.length?`Итого за ${p.length} мес.: ${formatMoney(profileTotal(p))} ₽`:''; }
 function syncCostEditor(){
   const method=document.getElementById('editCalcMethod').value;
-  const monthly=true;
-  document.getElementById('singleCostWrap').hidden=true;
-  document.getElementById('profileCostWrap').hidden=false;
-  document.getElementById('logicWrap').hidden=false;
-  document.getElementById('modelParamsWrap').hidden=method!=='model';
   const isModel=method==='model';
-  document.getElementById('editCostLogic').readOnly=isModel;
-  document.getElementById('editBusinessRationale').readOnly=isModel;
+  document.getElementById('singleCostWrap').hidden=true;
+  document.getElementById('profileCostWrap').hidden=isModel;
+  document.getElementById('logicWrap').hidden=isModel;
+  document.getElementById('modelParamsWrap').hidden=!isModel;
   document.getElementById('addPlArticle').hidden=isModel;
-  const model=availableModel({indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim()});
-  document.getElementById('avgCheckWrap').hidden=document.getElementById('editIndicator').value.trim()!=='Количество выдач';
-  document.getElementById('creditParamsWrap').hidden=model?.id==='insurance_income_v1';
+  const currentId=document.getElementById('editId')?.value;
+  const currentDriver=drivers.find(x=>x.id===currentId);
+  const model=DRIVER_MODELS[currentDriver?.modelId] || availableModel({indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim()});
+  document.getElementById('avgCheckWrap').hidden=!(model?.id==='credit_income_v2' && document.getElementById('editIndicator').value.trim()==='Количество выдач');
+  document.getElementById('creditParamsWrap').hidden=model?.id!=='credit_income_v2';
   document.getElementById('conversionWrap').hidden=model?.id!=='insurance_income_v1';
-  const sourceNote=document.getElementById('modelSourceNote'); if(sourceNote && isModel) sourceNote.textContent='Исходные значения получены из модели планирования и прогнозирования · среднее за последние 3 месяца выбранного планового / прогнозного года. Их можно скорректировать для расчёта.';
-  if(document.getElementById('editHorizon')) document.getElementById('editHorizon').readOnly=model?.id==='insurance_income_v1';
+  const sourceNote=document.getElementById('modelSourceNote'); if(sourceNote && isModel) sourceNote.textContent='Источник: прогнозная модель · среднее за последние 3 месяца прогнозного года. При необходимости исходные значения можно скорректировать.';
+  if(document.getElementById('editHorizon')) document.getElementById('editHorizon').readOnly=isModel;
+  const business=document.getElementById('businessLogicSection'); if(business) business.hidden=isModel;
+  const modelLink=document.getElementById('detailModelLink'); if(modelLink){ modelLink.hidden=!isModel; modelLink.dataset.openModel=model?.id||''; modelLink.textContent=model?`Открыть модель «${model.title}»`:'Открыть модель'; }
+  // В модельном драйвере методика и аналитика фиксированы: пользователь корректирует только исходные значения модели.
+  ['editName','editIndicator','editProduct','editChannel','editSegment'].forEach(id=>{ const x=document.getElementById(id); if(x) x.readOnly=isModel; });
+  ['editEffectType','editUnit','editBase','editCalcMethod','editIncrementMode'].forEach(id=>{ const x=document.getElementById(id); if(x) x.disabled=isModel; });
   updateProfileTotal();
 }
 document.getElementById('editCalcMethod').addEventListener('change',syncCostEditor);
@@ -1002,6 +1006,7 @@ document.getElementById('editUnit').addEventListener('change',e=>{
   other.hidden=e.target.value!=='other';
   if(!other.hidden) setTimeout(()=>other.focus(),50);
 });
+document.getElementById('detailModelLink')?.addEventListener('click',e=>{ const id=e.currentTarget.dataset.openModel; closeDriver(); switchTab('models'); const row=document.querySelector(`[data-model-id="${id}"]`); if(row){ row.scrollIntoView({behavior:'smooth',block:'center'}); row.classList.add('model-highlight'); setTimeout(()=>row.classList.remove('model-highlight'),1800); } });
 document.getElementById('deleteDriver').addEventListener('click',()=>{
   const id=document.getElementById('editId').value; if(!confirm('Удалить этот драйвер из локального реестра?'))return;
   drivers=drivers.filter(x=>x.id!==id);save();renderRegistry();updateSummary();closeDriver();toast('Драйвер удалён');

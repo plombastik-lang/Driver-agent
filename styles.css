@@ -196,6 +196,6 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
   .registry-main strong{font-size:13px;line-height:1.32}
   .registry-row .badge{align-self:center}
 }
-/* v4.9: fast-path agent UX */
+/* v5.0: UX cleanup */
 .similar-card small{display:block;color:#8190c5;font-size:9px;text-transform:uppercase;letter-spacing:.09em;font-weight:850;margin-bottom:4px}
 .message.result-message,.message.preview-message{max-width:96%}

@@ -254,12 +254,16 @@ function incrementModeDescription(v){
 function isPlArticle(value){ return PL_ARTICLES.some(x=>analyticsKey(x)===analyticsKey(value)); }
 function similarDrivers(c) {
   if (!c.indicator && !c.product) return [];
-  return drivers.map(d=>{
+  const matches=drivers.map(d=>{
     const sameIndicator=!!c.indicator && d.indicator===c.indicator;
     const sameProduct=!!c.product && d.product===c.product;
     const score=sameIndicator&&sameProduct?3:sameIndicator?2:sameProduct?1:0;
     return {d,score,sameIndicator,sameProduct};
-  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,3);
+  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score);
+  if(!matches.length) return [];
+  const bestScore=matches[0].score;
+  // Не перегружаем пользователя менее релевантными аналогами, если есть более близкие совпадения.
+  return matches.filter(x=>x.score===bestScore).slice(0,3);
 }
 function similarKind(x){ return x.score===3?'Максимально похожий':x.score===2?'Похожий драйвер':'Аналог по продукту'; }
 function moneyNumber(v){ const n=Number(String(v??'').replace(/\s/g,'').replace(',','.')); return Number.isFinite(n)?n:0; }
@@ -604,6 +608,8 @@ function continueFlow() {
   if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) {
     return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices);
   }
+  if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS);
+  if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS);
   if (!c.product) return ask('product', 'К какому продукту относится драйвер?', PRODUCTS);
   if (rejectUnknownProduct(c.product)) return;
 
@@ -634,7 +640,7 @@ function continueFlow() {
   if(!c.calcMethod && model){
     flow.step='modelChoice'; flow.modelId=model.id; save();
     const extra=c.indicator==='Количество выдач'?' + средний чек':'';
-    addMessage('agent', `Для этого драйвера есть модель «${model.title}». Рассчитать стоимость по ней?`);
+    addMessage('agent', `Для этого драйвера есть модель «${model.title}». Рассчитать стоимость?`);
     renderContextActions(); renderProgress(); return;
   }
   if(c.calcMethod==='model' && !c.base){ c.base=defaultModelBase(c,model); save(); }
@@ -658,7 +664,7 @@ function continueFlow() {
     if(!(c.costProfile||[]).length){
       const result=calculateModel(c); const profile=result.profile;
       c.costProfile=profile; c.plAllocations=result.allocations; c.cost=String(profileTotal(profile)); c.costLogicText=modelLogic(c); c.businessRationale=modelBusinessRationale(c);
-      flow.step='modelConfirm'; save();
+      flow.step='modelResult'; save();
       addMessage('agent', `Стоимость рассчитана: ${formatMoney(profileTotal(profile))} ₽ на ${baseLabel(c.base)} ${c.unit}.
 Профиль: ${profile.length} мес. · модель «${model.title}».
 ${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)} ${formatMoney(profileTotal(a.profile||[]))} ₽`).join(' · ')}`, 'result');
@@ -823,8 +829,10 @@ function renderContextActions() {
     el.innerHTML=sims.map(d=>`<div class="similar-card"><small>${escapeHtml(similarKind({score:meta.get(d.id)||1}))}</small><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(costSummary(d))} за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</span><button data-flow-action="useSimilar" data-driver-id="${d.id}">Открыть</button></div>`).join('')+`<button data-flow-action="continueNew" class="secondary">Ни один не подходит — создать новый</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='modelChoice') {
     el.innerHTML=`<button data-flow-value="Использовать модель">Использовать модель</button><button data-flow-value="Задать свою логику" class="secondary">Задать свою логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
-  } else if (flow.step==='modelConfirm') {
-    el.innerHTML=`<button data-flow-action="confirmModel">Рассчитать</button><button data-flow-action="redoModel" class="secondary">Параметры</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='modelResult') {
+    el.innerHTML=`<button data-flow-action="createFromModel">Создать драйвер</button><button data-flow-action="viewModelCalc" class="secondary">Посмотреть расчёт</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='modelDetails') {
+    el.innerHTML=`<button data-flow-action="createFromModel">Создать драйвер</button><button data-flow-action="redoModel" class="secondary">Параметры</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='formulaConfirm') {
     el.innerHTML=`<button data-flow-action="confirmFormula">✓ Подтвердить расчёт</button><button data-flow-action="redoFormula" class="secondary">Изменить логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='preview') {
@@ -1005,7 +1013,7 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   }
   const actionLabels={
     cancel:'Отмена', confirmNewIndicator:'Продолжить', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
-    continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', confirmModel:'Рассчитать',
+    continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', createFromModel:'Создать драйвер', viewModelCalc:'Посмотреть расчёт',
     redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить'
   };
   if(action==='useSimilar'){
@@ -1022,7 +1030,19 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   else if(action==='continueNew'){ flow.similarIds=[]; flow.step=''; save(); continueFlow(); }
   else if(action==='useSimilar'){ const id=e.target.dataset.driverId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
   else if(action==='confirmFormula'){ flow.step=''; save(); continueFlow(); }
-  else if(action==='confirmModel'){ flow.step=''; save(); continueFlow(); }
+  else if(action==='createFromModel'){ finalizeDriver(); }
+  else if(action==='viewModelCalc'){
+    const c=flow.candidate; const model=DRIVER_MODELS[c.modelId]||availableModel(c);
+    flow.step='modelDetails'; save();
+    const profile=c.costProfile||[]; const allocations=c.plAllocations||[];
+    addMessage('agent', `Расчёт по модели «${model?.title||'расчёта'}»:
+${compactProfileLines(profile)}
+
+${allocations.map(a=>`${a.article}: ${formatMoney(profileTotal(a.profile||[]))} ₽`).join('\n')}
+
+Итого: ${formatMoney(profileTotal(profile))} ₽`, 'result');
+    renderContextActions(); renderProgress();
+  }
   else if(action==='redoModel'){ flow.candidate.costProfile=[]; flow.candidate.cost=''; flow.candidate.modelParams={}; flow.step=''; save(); continueFlow(); }
   else if(action==='redoFormula'){ flow.candidate.costProfile=[]; flow.candidate.costFormula=null; flow.candidate.costLogicText=''; flow.step=''; save(); continueFlow(); }
   else if(action==='updateExisting'){ const id=flow.duplicateId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }

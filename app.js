@@ -1,4 +1,4 @@
-const REGISTRY_KEY = 'driver-agent.pwa.registry.v1';
+const REGISTRY_KEY = 'driver-agent.pwa.registry.v4';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
@@ -25,10 +25,56 @@ function indicatorRecord(name){ const c=canonicalFromList(name, indicatorNames()
 const PRODUCTS = ['Ипотечное кредитование','Потребительский кредит','Автокредит','Образовательный кредит','Дебетовые карты','Кредитные карты','Платежи','Переводы','ОСАГО','КАСКО','Накопительные счета','Срочные счета'];
 const PL_ARTICLES = ['Чистый процентный доход','Расходы на резервы','Операционные доходы','Прочие доходы','Прочие расходы'];
 
-const seedDrivers = [{
-  id: 'seed-1', name: 'Количество выдач — Ипотека', indicator: 'Количество выдач', product: 'Ипотека',
-  unit: 'шт.', effectType: 'Доходы', base: '1', cost: '2500', channel: '', segment: '', incrementMode: 'annual_spread', plAllocations:[{article:'Чистый процентный доход',profile:['2500']}], status: 'Готов'
-}];
+const seedDrivers = [
+  {
+    id:'demo-credit-volume-mortgage', name:'Объём выдач — Ипотечное кредитование', indicator:'Объём выдач', product:'Ипотечное кредитование',
+    unit:'₽', effectType:'Доходы', base:'1000000000', channel:'', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
+    modelParams:{margin:'12',risk:'2.4',repayment:'2',horizon:36,sources:{margin:'Модель планирования и прогнозирования',risk:'Модель планирования и прогнозирования',repayment:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
+  },
+  {
+    id:'demo-credit-count-consumer', name:'Количество выдач — Потребительский кредит', indicator:'Количество выдач', product:'Потребительский кредит',
+    unit:'шт.', effectType:'Доходы', base:'1000', channel:'Онлайн', segment:'Массовый', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
+    modelParams:{avgCheck:'650000',margin:'14',risk:'4',repayment:'4',horizon:24,sources:{avgCheck:'Модель планирования и прогнозирования',margin:'Модель планирования и прогнозирования',risk:'Модель планирования и прогнозирования',repayment:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
+  },
+  {
+    id:'demo-credit-volume-auto', name:'Объём выдач — Автокредит', indicator:'Объём выдач', product:'Автокредит',
+    unit:'₽', effectType:'Доходы', base:'1000000000', channel:'Партнёрский', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
+    modelParams:{margin:'11',risk:'3',repayment:'3',horizon:24,sources:{margin:'Модель планирования и прогнозирования',risk:'Модель планирования и прогнозирования',repayment:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
+  },
+  {
+    id:'demo-insurance-osago', name:'Объём сборов — ОСАГО', indicator:'Объём сборов', product:'ОСАГО',
+    unit:'₽', effectType:'Доходы', base:'1000000', channel:'', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'insurance_income_v1',
+    modelParams:{conversion:'18',horizon:1,sources:{conversion:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
+  },
+  {
+    id:'demo-insurance-kasko', name:'Объём сборов — КАСКО', indicator:'Объём сборов', product:'КАСКО',
+    unit:'₽', effectType:'Доходы', base:'1000000', channel:'Онлайн', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'insurance_income_v1',
+    modelParams:{conversion:'24',horizon:1,sources:{conversion:'Модель планирования и прогнозирования'},sourcePeriod:'Среднее за последние 3 месяца выбранного планового / прогнозного года'},
+    costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
+  },
+  {
+    id:'demo-rule-debit', name:'Количество клиентов — Дебетовые карты', indicator:'Количество клиентов', product:'Дебетовые карты',
+    unit:'шт.', effectType:'Доходы', base:'1000', channel:'Мобильное приложение', segment:'Массовый', incrementMode:'annual_spread', calcMethod:'rule', modelId:'', modelParams:null,
+    costMode:'monthly', costProfile:['120000','114000','108300','102885','97740.75','92853.71'], plAllocations:[{article:'Прочие доходы',profile:['120000','114000','108300','102885','97740.75','92853.71']}],
+    costLogicText:'В первый месяц эффект составляет 120 000 ₽ на 1 000 новых клиентов, затем ежемесячно снижается на 5% в течение 6 месяцев.', businessRationale:'Эффект снижается по мере затухания активности новых клиентов после привлечения.', status:'Готов'
+  },
+  {
+    id:'demo-manual-payments', name:'Количество продаж — Платежи', indicator:'Количество продаж', product:'Платежи',
+    unit:'шт.', effectType:'Доходы', base:'1000', channel:'', segment:'', incrementMode:'annual_spread', calcMethod:'manual', modelId:'', modelParams:null,
+    costMode:'monthly', costProfile:['45000','45000','40000'], plAllocations:[{article:'Прочие доходы',profile:['45000','45000','40000']}],
+    costLogicText:'Стоимость задана бизнесом вручную по месяцам.', businessRationale:'Ручная оценка эффекта используется до появления типовой расчётной модели.', status:'Готов'
+  },
+  {
+    id:'demo-step-share', name:'Доля рынка — Накопительные счета', indicator:'Доля рынка', product:'Накопительные счета',
+    unit:'%', effectType:'Доходы', base:'1', channel:'', segment:'', incrementMode:'step', calcMethod:'manual', modelId:'', modelParams:null,
+    costMode:'single', cost:'3500000', costProfile:['3500000'], plAllocations:[{article:'Прочие доходы',profile:['3500000']}],
+    costLogicText:'Стоимость изменения доли рынка на 1 п.п. задана бизнесом вручную.', businessRationale:'Для процентного показателя инкремент применяется ступенькой с месяца начала эффекта.', status:'Готов'
+  }
+];
 const seedMessages = [{
   id: 'hello', role: 'agent',
   text: 'Привет! Я помогу создать драйвер. Напиши запрос обычным языком — например: «Создай драйвер количества выдач по ипотеке». Я проверю реестр, уточню недостающие параметры и покажу карточку перед созданием.'
@@ -232,6 +278,14 @@ function modelLogic(c){
   return `Расчёт на остаток кредитной выдачи: ${baseText}; В 1-м месяце используется 50% выдачи. Чистый процентный доход = остаток × маржа ${p.margin}% годовых × дни месяца / дни года. Расходы на резервы = −остаток × риск ${p.risk}% годовых × дни месяца / дни года. Остаток ежемесячно уменьшается на ${p.repayment}%; горизонт ${p.horizon} мес.`;
 }
 function modelBusinessRationale(c){ const m=availableModel(c); return m?.businessLogic||''; }
+// Демо-набор v4: для модельных драйверов профиль и статьи рассчитываются той же моделью, что и для новых драйверов.
+for (const d of drivers) {
+  if (d.calcMethod==='model' && d.modelId && (!Array.isArray(d.costProfile) || !d.costProfile.length)) {
+    const result=calculateModel(d);
+    d.costProfile=result.profile; d.plAllocations=result.allocations; d.cost=String(profileTotal(result.profile));
+    d.costLogicText=modelLogic(d); d.businessRationale=modelBusinessRationale(d);
+  }
+}
 function compactProfileLines(profile, limit=6){
   const p=profile||[];
   const lines=p.slice(0,limit).map((v,i)=>`Месяц ${i+1}: ${formatMoney(v)} ₽`);

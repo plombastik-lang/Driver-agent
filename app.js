@@ -824,24 +824,18 @@ function renderProgress() {
 }
 function renderRegistry() {
   const q=(document.getElementById('registrySearch')?.value||'').trim().toLowerCase();
-  const list=drivers.filter(d=>!q || [d.name,d.indicator,d.product,d.effectType,d.status].join(' ').toLowerCase().includes(q));
+  const list=drivers.filter(d=>!q || [d.name,d.indicator,d.product,d.effectType,d.status,d.channel,d.segment].join(' ').toLowerCase().includes(q));
   const el=document.getElementById('driverList');
   if (!list.length) { el.innerHTML='<div class="empty">Ничего не найдено</div>'; return; }
-  el.innerHTML=`<div class="registry-table"><div class="registry-head"><span>Драйвер</span><span>Стоимость</span><span>Статус</span></div>${list.map(d=>{
-    const expanded=expandedDriverId===d.id;
-    return `<div class="registry-item ${expanded?'expanded':''}" data-driver-id="${d.id}">
-      <button class="registry-row" type="button" aria-expanded="${expanded}">
+  el.innerHTML=`<div class="registry-table"><div class="registry-head"><span>Драйвер</span><span>Стоимость</span><span>Статус</span></div>${list.map(d=>`
+    <div class="registry-item" data-driver-id="${d.id}">
+      <button class="registry-row registry-row-direct" type="button" data-open-driver="${d.id}" aria-label="Открыть карточку ${escapeHtml(d.name)}">
         <span class="registry-main"><strong>${escapeHtml(d.name)}</strong><small class="registry-cost-mobile">${escapeHtml(costSummary(d))} за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
         <span class="registry-cost"><strong>${escapeHtml(costSummary(d))}</strong><small>за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
         <span class="badge ${d.status==='Готов'?'ready':['Требует согласования','На согласовании'].includes(d.status)?'approval':''}">${escapeHtml(d.status)}</span>
-        <i class="row-chevron">⌄</i>
+        <i class="row-chevron direct">›</i>
       </button>
-      <div class="registry-expanded" ${expanded?'':'hidden'}>
-        <div class="meta-grid">${meta('Способ расчёта',d.calcMethod==='model'?`Модель «${DRIVER_MODELS[d.modelId]?.title||availableModel(d)?.title||'расчёта'}»`:d.calcMethod==='rule'?'По заданному правилу':'Ручной ввод')}${d.calcMethod!=='model'&&d.costLogicText?meta('Логика расчёта',d.costLogicText):''}${d.calcMethod!=='model'&&d.businessRationale?meta('Бизнес-смысл',d.businessRationale):''}${(d.plAllocations||[]).length?meta('Статьи P&L',(d.plAllocations||[]).map(x=>x.article).join(', ')):''}${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${d.channel?meta('Канал',d.channel):''}${d.segment?meta('Сегмент',d.segment):''}</div>
-        <div class="registry-actions"><button class="edit-driver-button" type="button" data-edit-driver="${d.id}">Открыть карточку</button>${d.calcMethod==='model'?`<button class="secondary-button" type="button" data-open-model="${d.modelId}">О модели</button>`:''}</div>
-      </div>
-    </div>`;
-  }).join('')}</div>`;
+    </div>`).join('')}</div>`;
 }
 function meta(label,value){ return `<div class="meta"><span>${label}</span><strong>${escapeHtml(value)}</strong></div>`; }
 function updateSummary(){
@@ -1014,15 +1008,9 @@ document.getElementById('modelList')?.addEventListener('click',e=>{ const row=e.
 document.getElementById('modelShowAll')?.addEventListener('click',()=>{ focusedModelId=null; expandedModelId=null; renderModels(); });
 document.getElementById('registrySearch').addEventListener('input',renderRegistry);
 document.getElementById('driverList').addEventListener('click',e=>{
-  const modelLink=e.target.closest('[data-open-model]');
-  if(modelLink){ e.stopPropagation(); closeDriver(); focusedModelId=modelLink.dataset.openModel; expandedModelId=focusedModelId; switchTab('models'); return; }
-  const edit=e.target.closest('[data-edit-driver]');
-  if(edit){ e.stopPropagation(); openDriver(edit.dataset.editDriver); return; }
-  const row=e.target.closest('.registry-row');
-  if(!row)return;
-  const item=row.closest('[data-driver-id]');
-  expandedDriverId=expandedDriverId===item.dataset.driverId ? null : item.dataset.driverId;
-  renderRegistry();
+  const row=e.target.closest('[data-open-driver]');
+  if(!row) return;
+  openDriver(row.dataset.openDriver);
 });
 document.getElementById('backToRegistry').addEventListener('click',closeDriver);
 document.getElementById('approveDriver').addEventListener('click',()=>{

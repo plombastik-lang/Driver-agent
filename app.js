@@ -1,10 +1,10 @@
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v1';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
-const LLM_KEY_STORAGE = 'driver-agent.pwa.openrouter-key.v1';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
 const INDICATOR_REGISTRY_KEY = 'driver-agent.pwa.indicators.v1';
 const LLM_MODEL = 'openrouter/free';
+const LLM_API_URL = 'https://driver-agent-api.plombastik.workers.dev';
 
 const INDICATOR_META = {
   'Количество выдач': 'шт.',
@@ -125,7 +125,6 @@ function similarDrivers(c) {
 }
 
 
-function getLlmKey(){ return localStorage.getItem(LLM_KEY_STORAGE) || ''; }
 function setLlmBusy(busy){
   const composer=document.getElementById('composer');
   const button=composer?.querySelector('button[type="submit"]');
@@ -133,13 +132,10 @@ function setLlmBusy(busy){
   composer?.classList.toggle('is-loading',busy);
 }
 function renderLlmSettings(){
-  const key=getLlmKey();
-  const input=document.getElementById('llmKey');
-  if(input && document.activeElement!==input) input.value=key;
   const status=document.getElementById('llmStatus');
-  if(status){ status.textContent=key?'Подключена':'Не подключена'; status.className='llm-status '+(key?'online':'offline'); }
+  if(status){ status.textContent='Общая LLM'; status.className='llm-status online'; }
   const meta=document.getElementById('llmMeta');
-  if(meta) meta.textContent=key ? `Модель: ${LLM_MODEL} · ключ сохранён локально` : `Модель: ${LLM_MODEL}`;
+  if(meta) meta.textContent=`Модель: ${LLM_MODEL} · через защищённый API`;
 }
 function cleanJsonText(text){
   const cleaned=String(text||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
@@ -178,8 +174,6 @@ function normalizeLlmData(data){
   return out;
 }
 async function callOpenRouter(userText, candidate={}, expectedStep=''){
-  const key=getLlmKey();
-  if(!key) throw new Error('LLM_KEY_MISSING');
   const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Извлекай параметры из сообщения пользователя и не выдумывай то, чего нет в тексте.
 
 Показатели из справочника: ${indicatorNames().join(', ')}. Если смысл точно соответствует одному из них, используй точное название из справочника. Если пользователь явно называет другой показатель, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный показатель похожим. В частности: «доля рынка» = «Доля рынка», «уровень проникновения» = «Уровень проникновения», «объём выдач» = «Объём выдач».
@@ -188,13 +182,13 @@ async function callOpenRouter(userText, candidate={}, expectedStep=''){
 
 Верни ТОЛЬКО один JSON-объект без markdown и пояснений с ключами: indicator, product, effectType, base, cost, channel, segment. Для неизвестных параметров ставь null. Если пользователь отвечает коротко на уточняющий вопрос, учитывай поле, которое сейчас ожидается. Стоимость верни числом/строкой в рублях без знака валюты.`;
   const current=JSON.stringify(candidate||{});
-  const response=await fetch('https://openrouter.ai/api/v1/chat/completions',{
+  const response=await fetch(LLM_API_URL,{
     method:'POST',
-    headers:{'Content-Type':'application/json','Authorization':`Bearer ${key}`,'HTTP-Referer':location.origin,'X-Title':'Driver Agent'},
-    body:JSON.stringify({model:LLM_MODEL,temperature:0,messages:[{role:'system',content:system},{role:'user',content:`Текущая карточка: ${current}\nОжидаемое поле: ${expectedStep||'не задано'}\n\nСообщение пользователя: ${userText}`} ]})
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:`Текущая карточка: ${current}\nОжидаемое поле: ${expectedStep||'не задано'}\n\nСообщение пользователя: ${userText}`} ]})
   });
   const payload=await response.json().catch(()=>({}));
-  if(!response.ok) throw new Error(payload?.error?.message || `OpenRouter: ${response.status}`);
+  if(!response.ok) throw new Error(payload?.error?.message || payload?.error || `LLM API: ${response.status}`);
   const content=payload?.choices?.[0]?.message?.content;
   if(!content) throw new Error('LLM вернула пустой ответ');
   const parsed=parseLooseLlmJson(content);
@@ -218,10 +212,6 @@ function mergeLlmCandidate(data){
   if(oldIdentity!==newIdentity){ delete flow.duplicateChecked; delete flow.duplicateId; }
 }
 async function processUserText(text){
-  if(!getLlmKey()){
-    flow ? handleFlowAnswer(text) : startFlow(text);
-    return;
-  }
   setLlmBusy(true);
   try{
     const expectedStep=flow?.step||'';
@@ -244,7 +234,6 @@ async function processUserText(text){
 }
 async function testLlmConnection(){
   const btn=document.getElementById('testLlm');
-  if(!getLlmKey()){ toast('Сначала сохрани API key'); return; }
   if(btn){btn.disabled=true;btn.textContent='Проверяю…';}
   try{
     await callOpenRouter('Создай драйвер количества клиентов по ипотеке',{},'');
@@ -519,18 +508,7 @@ document.getElementById('deleteDriver').addEventListener('click',()=>{
   drivers=drivers.filter(x=>x.id!==id);save();renderRegistry();updateSummary();closeDriver();toast('Драйвер удалён');
 });
 
-document.getElementById('saveLlmKey').addEventListener('click',()=>{
-  const input=document.getElementById('llmKey'); const key=input.value.trim();
-  if(!key){ toast('Вставь API key'); input.focus(); return; }
-  localStorage.setItem(LLM_KEY_STORAGE,key); renderLlmSettings(); toast('LLM подключена');
-});
-document.getElementById('testLlm').addEventListener('click',testLlmConnection);
-document.getElementById('clearLlmKey').addEventListener('click',()=>{
-  localStorage.removeItem(LLM_KEY_STORAGE); document.getElementById('llmKey').value=''; renderLlmSettings(); toast('LLM отключена');
-});
-document.getElementById('toggleKey').addEventListener('click',e=>{
-  const input=document.getElementById('llmKey'); const show=input.type==='password'; input.type=show?'text':'password'; e.target.textContent=show?'Скрыть':'Показать';
-});
+document.getElementById('testLlm')?.addEventListener('click',testLlmConnection);
 function endCurrentSession(){
   const meaningful=messages.filter(m=>m.id!=='hello');
   if(meaningful.length){

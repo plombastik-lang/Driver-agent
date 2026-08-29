@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=3.1" />
+  <link rel="stylesheet" href="styles.css?v=3.2" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v3.1</span>
+      <span class="version-pill">v3.2</span>
     </header>
 
     <section class="summary-card">
@@ -113,18 +113,13 @@
       <div class="llm-card">
         <div class="llm-head">
           <div><span class="mini-label">Интеграция</span><h2>LLM</h2></div>
-          <span id="llmStatus" class="llm-status offline">Не подключена</span>
+          <span id="llmStatus" class="llm-status online">Общая LLM</span>
         </div>
-        <p class="llm-copy">Подключи OpenRouter, чтобы агент понимал свободный текст через настоящую LLM. Ключ хранится только в браузере на этом устройстве.</p>
-        <label class="llm-label">OpenRouter API key
-          <div class="secret-row"><input id="llmKey" type="password" autocomplete="off" placeholder="sk-or-v1-…" /><button id="toggleKey" type="button" class="small-button">Показать</button></div>
-        </label>
+        <p class="llm-copy">LLM подключена через защищённый API прототипа. Коллегам не нужен отдельный API-ключ — достаточно открыть общую ссылку на Driver Agent.</p>
         <div class="llm-actions">
-          <button id="saveLlmKey" type="button" class="primary compact">Подключить LLM</button>
-          <button id="testLlm" type="button" class="secondary-button">Проверить</button>
-          <button id="clearLlmKey" type="button" class="quiet-button">Отключить</button>
+          <button id="testLlm" type="button" class="secondary-button">Проверить соединение</button>
         </div>
-        <div id="llmMeta" class="llm-meta">Модель: openrouter/free</div>
+        <div id="llmMeta" class="llm-meta">Модель: openrouter/free · через защищённый API</div>
       </div>
 
       <div class="section-head"><div><h2>Справочники</h2><p>Тестовые данные, которые агент использует при разборе запроса.</p></div></div>
@@ -141,6 +136,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=3.1"></script>
+  <script src="app.js?v=3.2"></script>
 </body>
 </html>

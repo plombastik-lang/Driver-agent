@@ -5,7 +5,17 @@ const LLM_KEY_STORAGE = 'driver-agent.pwa.openrouter-key.v1';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
 const LLM_MODEL = 'openrouter/free';
 
-const INDICATORS = ['Количество выдач','Объём выдач','Количество клиентов','Объём сборов','Количество продаж','Количество бонусов'];
+const INDICATOR_META = {
+  'Количество выдач': 'шт.',
+  'Объём выдач': '₽',
+  'Количество клиентов': 'шт.',
+  'Объём сборов': '₽',
+  'Количество продаж': 'шт.',
+  'Количество бонусов': 'шт.',
+  'Доля рынка': '%',
+  'Уровень проникновения': '%'
+};
+const INDICATORS = Object.keys(INDICATOR_META);
 const PRODUCTS = ['Ипотека','Кредитование','Страхование','Карты','Вклады','Бонусная программа','Общий'];
 
 const seedDrivers = [{
@@ -29,6 +39,7 @@ drivers = drivers.map(d => ({
   base: normalizeStoredBase(d.base),
   channel: d.channel || '',
   segment: d.segment || '',
+  unit: unitFor(d.indicator) || d.unit || '',
   status: d.status === 'Готов' && !String(d.cost || '').trim() ? 'Черновик' : d.status
 }));
 function normalizeStoredBase(base){
@@ -82,6 +93,8 @@ function detect(text) {
   else if (t.includes('клиент')) indicator = 'Количество клиентов';
   else if (t.includes('сбор')) indicator = 'Объём сборов';
   else if (t.includes('продаж')) indicator = 'Количество продаж';
+  else if (t.includes('доля рынка')) indicator = 'Доля рынка';
+  else if (t.includes('уров') && t.includes('проникнов')) indicator = 'Уровень проникновения';
   else if (t.includes('бонус')) indicator = 'Количество бонусов';
 
   let effectType = null;
@@ -90,9 +103,14 @@ function detect(text) {
 
   return { indicator, product, effectType };
 }
+function canonicalFromList(value, list) {
+  const raw=String(value||'').trim();
+  if(!raw) return null;
+  return list.find(x=>x.toLowerCase()===raw.toLowerCase()) || null;
+}
 function unitFor(indicator) {
-  if (indicator === 'Объём сборов' || indicator === 'Объём выдач') return '₽';
-  return 'шт.';
+  const canonical=canonicalFromList(indicator, INDICATORS);
+  return canonical ? INDICATOR_META[canonical] : null;
 }
 function exactDuplicate(c) {
   return drivers.find(d => d.indicator.toLowerCase() === c.indicator?.toLowerCase() && d.product.toLowerCase() === c.product?.toLowerCase());
@@ -124,13 +142,29 @@ function cleanJsonText(text){
   const start=cleaned.indexOf('{'), end=cleaned.lastIndexOf('}');
   return start>=0 && end>start ? cleaned.slice(start,end+1) : cleaned;
 }
+function parseLooseLlmJson(content){
+  const cleaned=cleanJsonText(content);
+  try { return JSON.parse(cleaned); } catch {}
+  const out={};
+  const keys=['indicator','product','effectType','base','cost','channel','segment'];
+  for(const key of keys){
+    const re=new RegExp(`[\"']?${key}[\"']?\s*:\s*(null|[\"'][^\"']*[\"']|-?\d+(?:\.\d+)?)`,'i');
+    const m=cleaned.match(re);
+    if(!m) continue;
+    let v=m[1];
+    if(/^null$/i.test(v)) out[key]=null;
+    else if((v.startsWith('\"')&&v.endsWith('\"'))||(v.startsWith("'")&&v.endsWith("'"))) out[key]=v.slice(1,-1);
+    else out[key]=v;
+  }
+  return Object.keys(out).length ? out : null;
+}
 
 function normalizeLlmData(data){
   const out={};
-  if(INDICATORS.includes(data?.indicator)) out.indicator=data.indicator;
+  if(typeof data?.indicator==='string' && data.indicator.trim()) out.indicator=data.indicator.trim();
   if(typeof data?.product==='string' && data.product.trim()) out.product=data.product.trim();
   if(['Доходы','Расходы'].includes(data?.effectType)) out.effectType=data.effectType;
-  if(['шт.','₽','%'].includes(data?.unit)) out.unit=data.unit;
+  // Единица измерения — атрибут показателя из справочника, LLM её не назначает.
   if(['1','1000','1000000','1000000000'].includes(String(data?.base||''))) out.base=String(data.base);
   if(data?.cost!==null && data?.cost!==undefined && String(data.cost).trim()){
     const parsed=parseCost(String(data.cost)); if(parsed) out.cost=parsed.cost;
@@ -142,7 +176,13 @@ function normalizeLlmData(data){
 async function callOpenRouter(userText, candidate={}, expectedStep=''){
   const key=getLlmKey();
   if(!key) throw new Error('LLM_KEY_MISSING');
-  const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Извлекай параметры из сообщения пользователя и не выдумывай то, чего нет в тексте.\n\nПоказатели из справочника: ${INDICATORS.join(', ')}. Если смысл точно соответствует одному из них, используй точное название из справочника.\nПродукт должен быть только из справочника: ${PRODUCTS.join(', ')}. Если в сообщении указан другой продукт, верни его как услышал — приложение отдельно проверит справочник и завершит процесс, если продукта нет. Не подменяй неизвестный продукт похожим из справочника.\nТип эффекта: Доходы или Расходы. Основные единицы измерения: шт., ₽, %. База стоимости: 1, 1000, 1000000 или 1000000000.\n\nВерни ТОЛЬКО один JSON-объект без markdown и пояснений с ключами: indicator, product, effectType, unit, base, cost, channel, segment. Для неизвестных параметров ставь null. Если пользователь отвечает коротко на уточняющий вопрос, учитывай поле, которое сейчас ожидается. Для фразы «объём выдач» выбирай «Объём выдач», а не «Количество выдач». Стоимость верни числом/строкой в рублях без знака валюты.`;
+  const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Извлекай параметры из сообщения пользователя и не выдумывай то, чего нет в тексте.
+
+Показатели из справочника: ${INDICATORS.join(', ')}. Если смысл точно соответствует одному из них, используй точное название из справочника. Если пользователь явно называет другой показатель, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный показатель похожим. В частности: «доля рынка» = «Доля рынка», «уровень проникновения» = «Уровень проникновения», «объём выдач» = «Объём выдач».
+Продукт должен быть только из справочника: ${PRODUCTS.join(', ')}. Если в сообщении указан другой продукт, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный продукт похожим.
+Тип эффекта: Доходы или Расходы. База стоимости: 1, 1000, 1000000 или 1000000000. Единицу измерения НЕ определяй: она является атрибутом показателя и берётся приложением только из справочника показателей.
+
+Верни ТОЛЬКО один JSON-объект без markdown и пояснений с ключами: indicator, product, effectType, base, cost, channel, segment. Для неизвестных параметров ставь null. Если пользователь отвечает коротко на уточняющий вопрос, учитывай поле, которое сейчас ожидается. Стоимость верни числом/строкой в рублях без знака валюты.`;
   const current=JSON.stringify(candidate||{});
   const response=await fetch('https://openrouter.ai/api/v1/chat/completions',{
     method:'POST',
@@ -153,9 +193,8 @@ async function callOpenRouter(userText, candidate={}, expectedStep=''){
   if(!response.ok) throw new Error(payload?.error?.message || `OpenRouter: ${response.status}`);
   const content=payload?.choices?.[0]?.message?.content;
   if(!content) throw new Error('LLM вернула пустой ответ');
-  let parsed;
-  try{ parsed=JSON.parse(cleanJsonText(content)); }
-  catch{ throw new Error('Не удалось разобрать ответ LLM'); }
+  const parsed=parseLooseLlmJson(content);
+  if(!parsed) throw new Error('Не удалось разобрать ответ LLM');
   return normalizeLlmData(parsed);
 }
 function mergeLlmCandidate(data){
@@ -163,7 +202,7 @@ function mergeLlmCandidate(data){
   const c=flow.candidate;
   const oldIdentity=`${c.indicator||''}|${c.product||''}`;
   Object.assign(c,data);
-  if(!c.unit && c.indicator) c.unit=unitFor(c.indicator);
+  if(c.indicator) c.unit=unitFor(c.indicator);
   const newIdentity=`${c.indicator||''}|${c.product||''}`;
   if(oldIdentity!==newIdentity){ delete flow.duplicateChecked; delete flow.duplicateId; }
 }
@@ -188,7 +227,7 @@ async function processUserText(text){
     continueFlow();
   }catch(err){
     console.warn('LLM fallback:',err);
-    addMessage('agent',`Не удалось обратиться к LLM (${err.message}). Продолжу по локальным правилам.`);
+    // Для пользователя техническая ошибка LLM скрыта: продолжаем по детерминированным правилам.
     flow ? handleFlowAnswer(text) : startFlow(text);
   }finally{ setLlmBusy(false); }
 }
@@ -206,13 +245,24 @@ async function testLlmConnection(){
 
 function startFlow(text) {
   const detected = detect(text);
-  flow = { step:'', candidate:{ ...detected, unit: unitFor(detected.indicator), base:'', cost:'', channel:'', segment:'', status:'Черновик' }, original:text };
+  flow = { step:'', candidate:{ ...detected, unit: detected.indicator ? unitFor(detected.indicator) : null, base:'', cost:'', channel:'', segment:'', status:'Черновик' }, original:text };
   save();
   continueFlow();
 }
+function rejectUnknownIndicator(indicator) {
+  const value=String(indicator||'').trim();
+  if(!value) return false;
+  const canonical=canonicalFromList(value, INDICATORS);
+  if(canonical){ flow.candidate.indicator=canonical; flow.candidate.unit=unitFor(canonical); return false; }
+  addMessage('agent', `Показатель «${value}» не найден в справочнике. Создание драйвера завершено.`);
+  flow=null; save(); renderContextActions(); renderProgress();
+  return true;
+}
 function rejectUnknownProduct(product) {
   const value=String(product||'').trim();
-  if(!value || PRODUCTS.includes(value)) return false;
+  if(!value) return false;
+  const canonical=canonicalFromList(value, PRODUCTS);
+  if(canonical){ flow.candidate.product=canonical; return false; }
   addMessage('agent', `Продукт «${value}» не найден в справочнике. Создание драйвера завершено.`);
   flow=null; save(); renderContextActions(); renderProgress();
   return true;
@@ -221,6 +271,7 @@ function continueFlow() {
   if (!flow) return;
   const c = flow.candidate;
   if (!c.indicator) return ask('indicator', 'Какой показатель должен лежать в основе драйвера?', INDICATORS);
+  if (rejectUnknownIndicator(c.indicator)) return;
   c.unit = unitFor(c.indicator);
   if (!c.product) return ask('product', 'К какому продукту относится драйвер?', PRODUCTS);
   if (rejectUnknownProduct(c.product)) return;
@@ -353,8 +404,7 @@ function updateSummary(){
   document.getElementById('readyCount').textContent=drivers.filter(d=>d.status==='Готов').length;
 }
 function renderDictionaries(){
-  const unitMap={'Количество выдач':'шт.','Объём выдач':'₽','Количество клиентов':'шт.','Объём сборов':'₽','Количество продаж':'шт.','Количество бонусов':'шт.'};
-  document.getElementById('indicatorDict').innerHTML=INDICATORS.map(x=>`<tr><td>${escapeHtml(x)}</td><td>${escapeHtml(unitMap[x]||'—')}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  document.getElementById('indicatorDict').innerHTML=INDICATORS.map(x=>`<tr><td>${escapeHtml(x)}</td><td>${escapeHtml(INDICATOR_META[x]||'—')}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
   document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
   document.getElementById('indicatorCount').textContent=`${INDICATORS.length} записей`;
   document.getElementById('productCount').textContent=`${PRODUCTS.length} записей`;

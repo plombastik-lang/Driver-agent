@@ -5,6 +5,42 @@ const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
 const INDICATOR_REGISTRY_KEY = 'driver-agent.pwa.indicators.v1';
 const LLM_MODEL = 'openrouter/free';
 const LLM_API_URL = 'https://driver-agent-api.plombastik.workers.dev';
+const AUTH_TOKEN_KEY = 'driver-agent.auth.token.v1';
+const AUTH_EXPIRES_KEY = 'driver-agent.auth.expires.v1';
+let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
+
+function authHeaders(extra={}){
+  return {...extra, ...(authToken ? {Authorization:`Bearer ${authToken}`} : {})};
+}
+function clearAuth(){
+  authToken='';
+  localStorage.removeItem(AUTH_TOKEN_KEY);
+  localStorage.removeItem(AUTH_EXPIRES_KEY);
+}
+function authStillValid(){
+  const exp=Number(localStorage.getItem(AUTH_EXPIRES_KEY)||0);
+  return Boolean(authToken && exp && Date.now()<exp);
+}
+function showAuthGate(message=''){
+  document.body.classList.add('auth-pending');
+  const gate=document.getElementById('authGate'); if(gate) gate.hidden=false;
+  const err=document.getElementById('authError'); if(err){err.textContent=message;err.hidden=!message;}
+  setTimeout(()=>document.getElementById('appPassword')?.focus(),80);
+}
+function hideAuthGate(){
+  document.getElementById('authGate')?.setAttribute('hidden','');
+  document.body.classList.remove('auth-pending');
+}
+function requireLogin(message='Сессия истекла. Введите пароль снова.') { clearAuth(); showAuthGate(message); }
+async function loginWithPassword(password){
+  const response=await fetch(`${LLM_API_URL}/login`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({password})});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok || !payload.token) throw new Error(payload?.error || 'Не удалось войти');
+  authToken=payload.token;
+  localStorage.setItem(AUTH_TOKEN_KEY,payload.token);
+  localStorage.setItem(AUTH_EXPIRES_KEY,String(payload.expiresAt||0));
+}
+
 
 const INDICATOR_META = {
   'Количество выдач': 'шт.',
@@ -401,10 +437,11 @@ async function callOpenRouter(userText, candidate={}, expectedStep=''){
   const current=JSON.stringify(candidate||{});
   const response=await fetch(LLM_API_URL,{
     method:'POST',
-    headers:{'Content-Type':'application/json'},
+    headers:authHeaders({'Content-Type':'application/json'}),
     body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:`Текущая карточка: ${current}\nОжидаемое поле: ${expectedStep||'не задано'}\n\nСообщение пользователя: ${userText}`} ]})
   });
   const payload=await response.json().catch(()=>({}));
+  if(response.status===401){ requireLogin(); throw new Error('Требуется вход'); }
   if(!response.ok) throw new Error(payload?.error?.message || payload?.error || `LLM API: ${response.status}`);
   const content=payload?.choices?.[0]?.message?.content;
   if(!content) throw new Error('LLM вернула пустой ответ');
@@ -479,8 +516,9 @@ async function interpretCostLogic(text){
 - constant: {type,amount,months}
 - two_stage: {type,firstAmount,firstMonths,secondAmount,secondMonths}
 Если срок не указан, months=null. Для two_stage сроки каждого этапа обязательны, иначе null. Добавь поля businessLogic — коротко по-русски, что означает формула, и businessRationale — короткий бизнес-смысл эффекта. Ничего не выдумывай.`;
-  const response=await fetch(LLM_API_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:text}]})});
+  const response=await fetch(LLM_API_URL,{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:text}]})});
   const payload=await response.json().catch(()=>({}));
+  if(response.status===401){ requireLogin(); throw new Error('formula'); }
   if(!response.ok) throw new Error('formula');
   const content=payload?.choices?.[0]?.message?.content; if(!content) throw new Error('formula');
   const data=JSON.parse(cleanJsonText(content));
@@ -1102,6 +1140,29 @@ document.getElementById('prompt').addEventListener('focus',()=>setTimeout(syncVi
 document.getElementById('prompt').addEventListener('blur',()=>{document.body.classList.remove('keyboard-open');setTimeout(syncVisualViewport,80)});
 syncVisualViewport();
 
+
+const loginForm=document.getElementById('loginForm');
+loginForm?.addEventListener('submit',async e=>{
+  e.preventDefault();
+  const input=document.getElementById('appPassword'); const btn=document.getElementById('loginButton'); const err=document.getElementById('authError');
+  const password=input?.value||''; if(!password)return;
+  if(btn){btn.disabled=true;btn.textContent='Вхожу…';} if(err) err.hidden=true;
+  try{
+    await loginWithPassword(password);
+    if(input) input.value='';
+    hideAuthGate();
+    renderAll();
+  }catch(ex){
+    if(err){err.textContent=ex.message==='Неверный пароль'?'Неверный пароль. Попробуйте ещё раз.':'Не удалось войти. Проверьте соединение и попробуйте снова.';err.hidden=false;}
+  }finally{ if(btn){btn.disabled=false;btn.textContent='Войти';} }
+});
+document.getElementById('togglePassword')?.addEventListener('click',e=>{
+  const input=document.getElementById('appPassword'); if(!input)return; const show=input.type==='password'; input.type=show?'text':'password'; e.currentTarget.textContent=show?'Скрыть':'Показать';
+});
+document.getElementById('logoutButton')?.addEventListener('click',()=>{
+  clearAuth(); showAuthGate('Вы вышли на этом устройстве.');
+});
+
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));
 function renderAll(){renderMessages();renderContextActions();renderProgress();renderRegistry();renderModels();renderDictionaries();renderLlmSettings();updateSummary();}
-renderAll();
+if(authStillValid()){ hideAuthGate(); renderAll(); } else { clearAuth(); showAuthGate(''); }

@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=3.9" />
+  <link rel="stylesheet" href="styles.css?v=4.2" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v4.1</span>
+      <span class="version-pill">v4.2</span>
     </header>
 
     <section class="summary-card">
@@ -73,6 +73,10 @@
             <label>Название<input id="editName" required /></label>
             <label>Показатель<input id="editIndicator" required /></label>
             <label>Продукт<input id="editProduct" required /></label>
+            <div class="form-grid analytics-grid">
+              <label id="editChannelWrap">Канал<input id="editChannel" placeholder="Например: мобильный банк" /></label>
+              <label id="editSegmentWrap">Сегмент<input id="editSegment" placeholder="Например: массовый" /></label>
+            </div>
           </div>
           <div class="form-section">
             <h3>Параметры эффекта</h3>
@@ -88,7 +92,7 @@
                 <input id="editUnitOther" class="conditional-field" placeholder="Укажи единицу измерения" hidden />
               </label>
               <label>База расчёта<select id="editBase"><option value="">Не выбрана</option><option value="1">1</option><option value="1000">1 000</option><option value="1000000">1 млн</option><option value="1000000000">1 млрд</option></select></label>
-              <label>Способ расчёта<select id="editCalcMethod"><option value="model">По готовой модели</option><option value="rule">По заданному правилу</option><option value="manual">Ручной ввод</option></select></label><label>Как применяется годовой инкремент<select id="editIncrementMode"><option value="step">Ступенькой с месяца начала эффекта</option><option value="annual_spread">Годовой инкремент распределяется по месяцам</option></select><span class="field-hint">Пользователь всегда задаёт изменение отдельно на каждый год. Месяц начала эффекта применяется только к первому году.</span></label>
+              <label>Способ расчёта<select id="editCalcMethod"><option value="model">По готовой модели</option><option value="rule">По заданному правилу</option><option value="manual">Ручной ввод</option></select></label><details class="advanced-details profile-field"><summary>Правило применения инкремента</summary><label>Как применяется годовой инкремент<select id="editIncrementMode"><option value="step">Ступенькой с месяца начала эффекта</option><option value="annual_spread">Годовой инкремент распределяется по месяцам</option></select><span class="field-hint">Изменение задаётся отдельно на каждый год. Месяц начала эффекта применяется только к первому году.</span></label></details>
               <label id="singleCostWrap" hidden>Эффект, ₽<input id="editCost" inputmode="decimal" /></label>
               <div id="modelParamsWrap" class="profile-field model-params" hidden>
                 <div class="field-title">Исходные значения для расчёта</div><div id="modelSourceNote" class="source-note"></div>
@@ -127,13 +131,7 @@
             <h3>Бизнес-смысл</h3>
             <label>Описание логики / бизнес-смысл<textarea id="editBusinessRationale" rows="3" placeholder="Например: доход снижается по мере погашения кредитного портфеля"></textarea></label>
           </div>
-          <div class="form-section">
-            <h3>Дополнительно</h3>
-            <div class="form-grid">
-              <label>Канал <span class="optional">необязательно</span><input id="editChannel" placeholder="Например: мобильный банк" /></label>
-              <label>Сегмент <span class="optional">необязательно</span><input id="editSegment" placeholder="Например: массовый" /></label>
-            </div>
-          </div>
+
           <div class="form-section">
             <h3>Статус</h3>
             <label>Статус<select id="editStatus" disabled><option>Черновик</option><option>На согласовании</option><option>Готов</option></select></label><p class="status-hint">Статус управляется процессом согласования. Методолог согласует драйвер целиком; подготовленный показатель активируется автоматически.</p><button type="button" id="approveDriver" class="primary">Согласовать драйвер</button>
@@ -147,10 +145,8 @@
     </section>
 
     <section id="models" class="panel">
-      <div class="section-head"><div><h2>Модели расчёта</h2><p>Единые правила расчёта стоимости модельных драйверов. Логика модели переиспользуется и не редактируется в карточке драйвера.</p></div><span id="modelCount"></span></div>
-      <div class="table-card model-registry-card">
-        <div class="table-wrap"><table><thead><tr><th>Модель и бизнес-логика</th><th>Продукты</th><th>Показатель драйвера</th><th>Используемые исходные показатели</th><th>Статьи P&amp;L</th></tr></thead><tbody id="modelDict"></tbody></table></div>
-      </div>
+      <div class="section-head model-section-head"><div><h2>Реестр моделей</h2><p>Модель задаёт единую методику расчёта, исходные показатели и статьи P&amp;L.</p></div><div class="model-head-actions"><span id="modelCount"></span><button id="modelShowAll" type="button" class="secondary-button" hidden>Все модели</button></div></div>
+      <div id="modelList" class="model-list"></div>
     </section>
 
     <section id="settings" class="panel">
@@ -174,11 +170,15 @@
         <div class="table-title"><h3>Продукты</h3><span id="productCount"></span></div>
         <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="productDict"></tbody></table></div>
       </div>
+      <div class="table-card">
+        <div class="table-title"><h3>Статьи P&amp;L</h3><span id="plArticleCount"></span></div>
+        <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="plArticleDict"></tbody></table></div>
+      </div>
       <button id="resetButton" class="ghost-danger full">Сбросить демо-данные</button>
     </section>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=3.9"></script>
+  <script src="app.js?v=4.2"></script>
 </body>
 </html>

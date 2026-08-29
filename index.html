@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=3.7" />
+  <link rel="stylesheet" href="styles.css?v=3.8" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v3.7</span>
+      <span class="version-pill">v3.8</span>
     </header>
 
     <section class="summary-card">
@@ -87,17 +87,21 @@
                 <input id="editUnitOther" class="conditional-field" placeholder="Укажи единицу измерения" hidden />
               </label>
               <label>База расчёта<select id="editBase"><option value="">Не выбрана</option><option value="1">1</option><option value="1000">1 000</option><option value="1000000">1 млн</option><option value="1000000000">1 млрд</option></select></label>
-              <label>Способ расчёта<select id="editCalcMethod"><option value="single">Одно значение</option><option value="model">По готовой модели</option><option value="rule">По заданному правилу</option><option value="manual">Вручную по месяцам</option></select></label>
-              <label id="singleCostWrap">Эффект, ₽<input id="editCost" inputmode="decimal" /></label>
+              <label>Способ расчёта<select id="editCalcMethod"><option value="model">По готовой модели</option><option value="rule">По заданному правилу</option><option value="manual">Ручной ввод</option></select></label><label>Как применяется годовой инкремент<select id="editIncrementMode"><option value="step">Ступенькой с месяца начала эффекта</option><option value="annual_spread">Годовой инкремент распределяется по месяцам</option></select><span class="field-hint">Пользователь всегда задаёт изменение отдельно на каждый год. Месяц начала эффекта применяется только к первому году.</span></label>
+              <label id="singleCostWrap" hidden>Эффект, ₽<input id="editCost" inputmode="decimal" /></label>
               <div id="modelParamsWrap" class="profile-field model-params" hidden>
                 <div class="field-title">Параметры модели</div>
-                <div class="form-grid">
+                <div id="creditParamsWrap" class="form-grid">
                   <label id="avgCheckWrap">Средний чек, ₽<input id="editAvgCheck" inputmode="decimal" /></label>
-                  <label>Маржа, % в месяц<input id="editMargin" inputmode="decimal" /></label>
-                  <label>Уровень риска, % в месяц<input id="editRisk" inputmode="decimal" /></label>
-                  <label>Погашение, % в месяц<input id="editRepayment" inputmode="decimal" /></label>
-                  <label>Горизонт, мес.<input id="editHorizon" inputmode="numeric" min="1" max="36" /></label>
+                  <label>Маржа, % годовых<input id="editMargin" inputmode="decimal" /></label>
+                  <label>Уровень риска, % годовых<input id="editRisk" inputmode="decimal" /></label>
+                  <label>Уровень погашения, % в месяц<input id="editRepayment" inputmode="decimal" /></label>
                 </div>
+                <div id="conversionWrap" class="form-grid" hidden>
+                  <label>Коэффициент перевода сборов в ОД, %<input id="editConversion" inputmode="decimal" /></label>
+                </div>
+                <div class="form-grid"><label>Горизонт, мес.<input id="editHorizon" inputmode="numeric" min="1" max="36" /></label></div>
+                <span class="field-hint">Годовые ставки календаризуются системой по фактическому числу дней месяца.</span>
                 <button id="recalcModel" type="button" class="secondary-button inline-button">Пересчитать профиль</button>
               </div>
               <div id="profileCostWrap" class="profile-field" hidden>
@@ -110,6 +114,13 @@
               <label id="logicWrap" class="profile-field" hidden>Логика расчёта стоимости<textarea id="editCostLogic" rows="3" placeholder="Например: первый месяц 10 000 ₽, далее снижение на 7% ежемесячно"></textarea><span class="field-hint">Сохраняем правило, по которому рассчитан профиль.</span></label>
             </div>
           </div>
+          <div class="form-section">
+            <h3>Распределение по статьям P&amp;L</h3>
+            <p class="status-hint">Стоимость драйвера может формироваться на одной или нескольких статьях. Для модельных драйверов статьи заданы моделью заранее. Сумма статей по каждому месяцу формирует итоговый эффект драйвера.</p>
+            <div id="editPlAllocations" class="pl-allocation-editor"></div>
+            <button id="addPlArticle" type="button" class="secondary-button inline-button">+ Добавить статью</button>
+          </div>
+
           <div class="form-section">
             <h3>Бизнес-смысл</h3>
             <label>Описание логики / бизнес-смысл<textarea id="editBusinessRationale" rows="3" placeholder="Например: доход снижается по мере погашения кредитного портфеля"></textarea></label>
@@ -156,13 +167,13 @@
       </div>
       <div class="table-card model-registry-card">
         <div class="table-title"><div><h3>Модели расчёта</h3><p>Готовые модели и показатели, для которых агент применяет их автоматически.</p></div><span id="modelCount"></span></div>
-        <div class="table-wrap"><table><thead><tr><th>Модель</th><th>Показатель драйвера</th><th>Параметры</th><th>Тип эффекта</th></tr></thead><tbody id="modelDict"></tbody></table></div>
+        <div class="table-wrap"><table><thead><tr><th>Модель и бизнес-логика</th><th>Продукты</th><th>Показатель драйвера</th><th>Параметры</th><th>Статьи P&amp;L</th></tr></thead><tbody id="modelDict"></tbody></table></div>
       </div>
       <button id="resetButton" class="ghost-danger full">Сбросить демо-данные</button>
     </section>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=3.7"></script>
+  <script src="app.js?v=3.8"></script>
 </body>
 </html>

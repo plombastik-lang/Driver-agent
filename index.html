@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=3.6" />
+  <link rel="stylesheet" href="styles.css?v=3.7" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v3.6</span>
+      <span class="version-pill">v3.7</span>
     </header>
 
     <section class="summary-card">
@@ -154,11 +154,15 @@
         <div class="table-title"><h3>Продукты</h3><span id="productCount"></span></div>
         <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="productDict"></tbody></table></div>
       </div>
+      <div class="table-card model-registry-card">
+        <div class="table-title"><div><h3>Модели расчёта</h3><p>Готовые модели и показатели, для которых агент применяет их автоматически.</p></div><span id="modelCount"></span></div>
+        <div class="table-wrap"><table><thead><tr><th>Модель</th><th>Показатель драйвера</th><th>Параметры</th><th>Тип эффекта</th></tr></thead><tbody id="modelDict"></tbody></table></div>
+      </div>
       <button id="resetButton" class="ghost-danger full">Сбросить демо-данные</button>
     </section>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=3.6"></script>
+  <script src="app.js?v=3.7"></script>
 </body>
 </html>

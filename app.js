@@ -141,10 +141,22 @@ function formatMoney(v){ return new Intl.NumberFormat('ru-RU',{maximumFractionDi
 function profileTotal(profile){ return (profile||[]).reduce((sum,v)=>sum+moneyNumber(v),0); }
 
 const DRIVER_MODELS = {
-  credit_income_v1: { id:'credit_income_v1', title:'Доход от кредитной выдачи' }
+  credit_income_v1: {
+    id:'credit_income_v1',
+    title:'Кредиты',
+    calculation:'Доход от кредитной выдачи',
+    product:'Кредитование',
+    effectType:'Доходы',
+    firstMonthBalanceFactor:0.5,
+    links:[
+      {indicator:'Объём выдач', params:['Маржа','Уровень риска','Уровень погашения']},
+      {indicator:'Количество выдач', params:['Маржа','Уровень риска','Уровень погашения','Средний чек']}
+    ]
+  }
 };
 function availableModel(c){
-  if(c?.product==='Кредитование' && ['Количество выдач','Объём выдач'].includes(c?.indicator)) return DRIVER_MODELS.credit_income_v1;
+  const model=DRIVER_MODELS.credit_income_v1;
+  if(c?.product===model.product && model.links.some(x=>x.indicator===c?.indicator)) return model;
   return null;
 }
 function calculateCreditModel(c){
@@ -153,9 +165,12 @@ function calculateCreditModel(c){
   if(!months) return [];
   let balance=c.indicator==='Количество выдач' ? moneyNumber(c.base)*moneyNumber(p.avgCheck) : moneyNumber(c.base);
   const margin=moneyNumber(p.margin)/100, risk=moneyNumber(p.risk)/100, repayment=moneyNumber(p.repayment)/100;
+  const model=availableModel(c)||DRIVER_MODELS.credit_income_v1;
   const out=[];
   for(let i=0;i<months;i++){
-    out.push(String(Math.round(balance*Math.max(0,margin-risk)*100)/100));
+    // Для нового винтажа в первый месяц используем средний остаток за месяц: 50% от выдачи.
+    const effectBalance=i===0 ? balance*model.firstMonthBalanceFactor : balance;
+    out.push(String(Math.round(effectBalance*Math.max(0,margin-risk)*100)/100));
     balance=Math.max(0,balance*(1-repayment));
   }
   return out;
@@ -163,10 +178,10 @@ function calculateCreditModel(c){
 function creditModelLogic(c){
   const p=c.modelParams||{};
   const baseText=c.indicator==='Количество выдач' ? `${baseLabel(c.base)} выдач × средний чек ${formatMoney(p.avgCheck)} ₽` : `${baseLabel(c.base)} объёма выдач`;
-  return `Расчёт на остаток кредитной выдачи: ${baseText}; ежемесячный эффект = остаток × (маржа ${p.margin}% − риск ${p.risk}%); остаток ежемесячно уменьшается на ${p.repayment}%; горизонт ${p.horizon} мес.`;
+  return `Расчёт на остаток кредитной выдачи: ${baseText}; в M1 для эффекта берётся 50% выдачи как средний остаток первого месяца; далее ежемесячный эффект = остаток × (маржа ${p.margin}% − риск ${p.risk}%); остаток ежемесячно уменьшается на ${p.repayment}%; горизонт ${p.horizon} мес.`;
 }
 function creditBusinessRationale(c){
-  return 'Доход формируется на остаток кредитной выдачи, уменьшается по мере погашения и учитывает маржу за вычетом риска.';
+  return 'Доход формируется на средний остаток кредитной выдачи: в первый месяц учитывается половина выдачи, далее остаток снижается по мере погашения; доход учитывает маржу за вычетом риска.';
 }
 function compactProfileLines(profile, limit=6){
   const p=profile||[];
@@ -405,12 +420,20 @@ function continueFlow() {
       renderContextActions(); renderProgress(); return;
     }
   }
+  const model=availableModel(c);
+  if(model?.effectType && !c.effectType){
+    c.effectType=model.effectType;
+    if(!flow.autoEffectNotified){
+      flow.autoEffectNotified=true;
+      addMessage('agent', `Для модели «${model.title}» тип эффекта — «${model.effectType}». Определил его автоматически.`);
+    }
+    save();
+  }
   if (!c.effectType) return ask('effectType', 'Какой тип эффекта у драйвера?', ['Доходы','Расходы']);
 
-  const model=availableModel(c);
   if(!c.calcMethod && model){
     flow.step='modelChoice'; flow.modelId=model.id; save();
-    addMessage('agent', `Для «${c.indicator} — ${c.product}» есть готовая модель «${model.title}». Она считает помесячный эффект по марже, риску и погашению${c.indicator==='Количество выдач'?', а объём сначала рассчитывает через средний чек':''}. Использовать её?`);
+    addMessage('agent', `Для «${c.indicator} — ${c.product}» есть готовая модель «${model.title}» — ${model.calculation}. Она считает помесячный эффект по марже, риску и погашению${c.indicator==='Количество выдач'?', а объём сначала рассчитывает через средний чек':''}. Использовать её?`);
     renderContextActions(); renderProgress(); return;
   }
   if (!c.base) return ask('base', 'Выбери базу, для которой рассчитываем эффект.', ['1','1 000','1 млн','1 млрд']);
@@ -646,8 +669,11 @@ function updateSummary(){
 function renderDictionaries(){
   document.getElementById('indicatorDict').innerHTML=indicatorRegistry.map(x=>`<tr><td>${escapeHtml(x.name)}</td><td>${escapeHtml(x.unit||'—')}</td><td><span class="table-status ${x.status==='Подготовлен'?'approval':''}">${escapeHtml(x.status)}</span></td></tr>`).join('');
   document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  const modelRows=Object.values(DRIVER_MODELS).flatMap(model=>model.links.map(link=>`<tr><td><strong>${escapeHtml(model.title)}</strong><small class="model-subtitle">${escapeHtml(model.calculation)}</small></td><td>${escapeHtml(link.indicator)}</td><td>${escapeHtml(link.params.join(', '))}</td><td>${escapeHtml(model.effectType)}</td></tr>`));
+  const modelDict=document.getElementById('modelDict'); if(modelDict) modelDict.innerHTML=modelRows.join('');
   document.getElementById('indicatorCount').textContent=`${indicatorRegistry.length} записей`;
   document.getElementById('productCount').textContent=`${PRODUCTS.length} записей`;
+  const modelCount=document.getElementById('modelCount'); if(modelCount) modelCount.textContent=`${modelRows.length} связей`;
 }
 function switchTab(name){
   closeDriver();
@@ -716,6 +742,16 @@ document.getElementById('composer').addEventListener('submit',e=>{
 document.getElementById('contextActions').addEventListener('click',e=>{
   const value=e.target.dataset.flowValue; const action=e.target.dataset.flowAction;
   if(value){ addMessage('user',value); handleFlowAnswer(value); return; }
+  if(!action) return;
+  const actionLabels={
+    cancel:'Отмена', confirmNewIndicator:'Продолжить', confirm:'Создать драйвер', createAnyway:'Создать новый драйвер',
+    continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', confirmModel:'Подтвердить модель',
+    redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить'
+  };
+  if(action==='useSimilar'){
+    const d=drivers.find(x=>x.id===e.target.dataset.driverId); addMessage('user',d?`Использовать «${d.name}»`:'Использовать найденный драйвер');
+  } else if(actionLabels[action]) addMessage('user',actionLabels[action]);
+
   if(action==='cancel') cancelFlow();
   else if(action==='confirmNewIndicator'){ flow.newIndicatorConfirmed=true; flow.step=''; save(); continueFlow(); }
   else if(action==='confirm') finalizeDriver();

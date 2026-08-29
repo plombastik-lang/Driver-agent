@@ -1,4 +1,5 @@
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
+const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.5';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
@@ -61,7 +62,7 @@ function indicatorNames(){ return indicatorRegistry.map(x=>x.name); }
 function indicatorRecord(name){ const c=canonicalFromList(name, indicatorNames()); return c ? indicatorRegistry.find(x=>x.name===c) : null; }
 
 
-// v5.3: отдельный масштабный retrieval-каталог показателей. Он не показывается
+// v5.4: отдельный масштабный retrieval-каталог показателей. Он не показывается
 // бизнес-пользователю и имитирует промышленный справочник с близкими названиями.
 const INDICATOR_ALIASES = {
   'Количество выдач':['выдачи','число выдач','количество кредитных выдач'],
@@ -595,18 +596,38 @@ function modelLogic(c){
   return `Расчёт на остаток кредитной выдачи: ${baseText}; В 1-м месяце используется 50% выдачи. Чистый процентный доход = остаток × маржа ${p.margin}% годовых × дни месяца / дни года. Расходы на резервы = −остаток × риск ${p.risk}% годовых × дни месяца / дни года. Остаток ежемесячно уменьшается на ${p.repayment}%; горизонт ${creditHorizonMonths(p)} мес.`;
 }
 function modelBusinessRationale(c){ const m=availableModel(c); return m?.businessLogic||''; }
-// Демо-набор v4: для модельных драйверов профиль и статьи рассчитываются той же моделью, что и для новых драйверов.
-for (const d of drivers) {
-  if (d.calcMethod==='model' && d.modelId) {
-    const result=calculateModel(d);
-    if(result.profile.length){
-      d.costProfile=result.profile; d.plAllocations=result.allocations; d.cost=String(profileTotal(result.profile)); d.costMode=result.profile.length>1?'monthly':'single';
-      d.costLogicText=modelLogic(d); d.businessRationale=modelBusinessRationale(d); d.status='Готов';
-    }
+// v5.5: модельный драйвер всегда хранит рассчитанную стоимость.
+// Это не только демо-инициализация: при каждом старте восстанавливаем профиль из модели,
+// если он пустой/нулевой или расходится с текущими параметрами модели.
+function repairModelDriverCost(d){
+  if(d?.calcMethod!=='model' || !d.modelId) return false;
+  const model=availableModel(d);
+  if(!model) {
+    if(d.status==='Готов') d.status='Черновик';
+    return false;
   }
+  const result=calculateModel(d);
+  if(!result.profile.length){
+    d.cost=''; d.costProfile=[]; d.plAllocations=[];
+    if(d.status==='Готов') d.status='Черновик';
+    return false;
+  }
+  d.costProfile=result.profile;
+  d.plAllocations=result.allocations;
+  d.cost=String(profileTotal(result.profile));
+  d.costMode=result.profile.length>1?'monthly':'single';
+  d.costLogicText=modelLogic(d);
+  d.businessRationale=modelBusinessRationale(d);
+  d.status='Готов';
+  return true;
+}
+let modelCostsRepaired=0;
+for (const d of drivers) {
+  if(repairModelDriverCost(d)) modelCostsRepaired++;
   d.name=buildDriverName(d)||d.name;
 }
 localStorage.setItem(REGISTRY_KEY, JSON.stringify(drivers));
+localStorage.setItem(MODEL_COST_REPAIR_KEY, JSON.stringify({version:'5.5',at:new Date().toISOString(),count:modelCostsRepaired}));
 function compactProfileLines(profile, limit=6){
   const p=profile||[];
   const lines=p.slice(0,limit).map((v,i)=>`Месяц ${i+1}: ${formatMoney(v)} ₽`);
@@ -908,9 +929,9 @@ function continueFlow() {
       if(p.margin===undefined || p.margin==='') return ask('modelMargin','Укажи маржу в процентах годовых.');
       if(p.risk===undefined || p.risk==='') return ask('modelRisk','Укажи уровень риска в процентах годовых.');
       if(p.repayment===undefined || p.repayment==='') return ask('modelRepayment','Укажи уровень погашения в процентах за месяц.');
+      if(!p.creditTermYears) return ask('modelCreditTerm','Укажи срок кредита в годах. Стоимость рассчитаю на срок кредита, но максимум на 36 месяцев.');
+      p.horizon=creditHorizonMonths(p);
     }
-    if(!p.creditTermYears) return ask('modelCreditTerm','Укажи срок кредита в годах. Стоимость рассчитаю на срок кредита, но максимум на 36 месяцев.');
-    p.horizon=creditHorizonMonths(p);
     if(!(c.costProfile||[]).length){
       const result=calculateModel(c); const profile=result.profile;
       c.costProfile=profile; c.plAllocations=result.allocations; c.cost=String(profileTotal(profile)); c.costLogicText=modelLogic(c); c.businessRationale=modelBusinessRationale(c);

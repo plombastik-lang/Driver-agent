@@ -59,6 +59,47 @@ indicatorRegistry = indicatorRegistry.filter(x => normalizeText(x.name) !== norm
 for (const [name,unit] of Object.entries(INDICATOR_META)) if(!indicatorRegistry.some(x=>normalizeText(x.name)===normalizeText(name))) indicatorRegistry.push({name,unit,status:'Активен'});
 function indicatorNames(){ return indicatorRegistry.map(x=>x.name); }
 function indicatorRecord(name){ const c=canonicalFromList(name, indicatorNames()); return c ? indicatorRegistry.find(x=>x.name===c) : null; }
+
+
+// v5.3: отдельный масштабный retrieval-каталог показателей. Он не показывается
+// бизнес-пользователю и имитирует промышленный справочник с близкими названиями.
+const INDICATOR_ALIASES = {
+  'Количество выдач':['выдачи','число выдач','количество кредитных выдач'],
+  'Объём выдач':['объем выдач','сумма выдач','выданный объем'],
+  'Количество клиентов':['клиенты','число клиентов','клиентская база'],
+  'Объём сборов':['объем сборов','сборы','страховые сборы'],
+  'Количество продаж':['продажи','число продаж'],
+  'Количество бонусов':['бонусы','число бонусов'],
+  'Доля рынка':['рыночная доля','market share'],
+  'Уровень проникновения':['проникновение','penetration','уровень пенетрации']
+};
+const INDICATOR_SUBJECTS=['активных клиентов','новых клиентов','уникальных клиентов','клиентов с продуктом','транзакций','операций','платежей','переводов','заявок','одобрений','активаций','договоров','счетов','карт','покупок','заказов','обращений','лидов','продаж','кросс-продаж','пролонгаций','отказов','просрочек','возвратов','погашений','выдач','сборов','комиссий','остатков','оборота'];
+const INDICATOR_PREFIXES=[['Количество','шт.'],['Объём','₽'],['Среднее количество','шт.'],['Средний объём','₽'],['Доля','%']];
+function buildScaleIndicators(){
+  const out=Object.entries(INDICATOR_META).map(([name,unit],i)=>({id:`core-i-${i+1}`,name,unit,aliases:INDICATOR_ALIASES[name]||[],synthetic:false,status:'Активен'}));
+  let n=1;
+  for(const [prefix,unit] of INDICATOR_PREFIXES){
+    for(const subject of INDICATOR_SUBJECTS){
+      if(out.length>=180) break;
+      const name=`${prefix} ${subject}`;
+      if(!out.some(x=>normalizeText(x.name)===normalizeText(name))) out.push({id:`scale-i-${String(n++).padStart(3,'0')}`,name,unit,aliases:[],synthetic:true,status:'Активен'});
+    }
+  }
+  const extras=[['Активная клиентская база','шт.'],['Средний чек','₽'],['Средний остаток','₽'],['Конверсия','%'],['Уровень одобрения','%'],['Уровень отказов','%'],['Коэффициент удержания','%'],['Коэффициент оттока','%'],['Доход на клиента','₽'],['Комиссионный доход','₽']];
+  for(const [name,unit] of extras){ if(out.length<200&&!out.some(x=>normalizeText(x.name)===normalizeText(name))) out.push({id:`scale-i-${String(n++).padStart(3,'0')}`,name,unit,aliases:[],synthetic:true,status:'Активен'}); }
+  while(out.length<200){ const i=out.length+1; out.push({id:`scale-i-${String(n++).padStart(3,'0')}`,name:`Тестовый показатель ${String(i).padStart(3,'0')}`,unit:'шт.',aliases:[],synthetic:true,status:'Активен'}); }
+  return out.slice(0,200);
+}
+const SCALE_INDICATORS=buildScaleIndicators();
+function resolveIndicatorCandidates(query,limit=5){ return resolveCandidates(query,SCALE_INDICATORS,limit,0.44); }
+function indicatorDecision(query){
+  const c=resolveIndicatorCandidates(query,5);
+  if(!c.length) return {status:'none',candidates:[]};
+  const top=c[0], second=c[1];
+  if(top.score>=0.90 && (!second || top.score-second.score>=0.10)) return {status:'auto',value:top.entity.name,confidence:top.score,candidates:c};
+  if(top.score>=0.68) return {status:'clarify',confidence:top.score,candidates:c.filter(x=>x.score>=Math.max(0.62,top.score-0.12)).slice(0,5)};
+  return {status:'none',confidence:top.score,candidates:c};
+}
 const PRODUCTS = ['Ипотечное кредитование','Потребительский кредит','Автокредит','Образовательный кредит','Дебетовые карты','Кредитные карты','Платежи','Переводы','ОСАГО','КАСКО','Накопительные счета','Срочные счета'];
 
 
@@ -150,7 +191,8 @@ function candidatePromptList(query){
   const products=resolveProductCandidates(query,7).map(x=>`${x.entity.name} (${Math.round(x.score*100)}%)`);
   const channels=resolveChannelCandidates(query,5).map(x=>x.entity.name);
   const segments=resolveSegmentCandidates(query,5).map(x=>x.entity.name);
-  return {products,channels,segments};
+  const indicators=resolveIndicatorCandidates(query,7).map(x=>`${x.entity.name} (${Math.round(x.score*100)}%)`);
+  return {indicators,products,channels,segments};
 }
 function buildScaleDrivers(){
   const inds=indicatorNames(); const out=[];
@@ -212,14 +254,26 @@ function runScaleBenchmark(){
   const segmentQueries=[['массовый','Массовый'],['премиальный','Премиальный'],['малый бизнес','Малый бизнес'],['средний бизнес','Средний бизнес'],['крупный бизнес','Крупный бизнес']];
   let segmentPass=0; for(const [q,e] of segmentQueries){ const x=resolveSegmentCandidates(q,1)[0]; if(x?.entity?.name===e) segmentPass++; }
 
+  const indicatorCases=[
+    ['количество выдач','Количество выдач'],['выдачи','Количество выдач'],['объем выдач','Объём выдач'],['сумма выдач','Объём выдач'],['клиенты','Количество клиентов'],['сборы','Объём сборов'],['продажи','Количество продаж'],['бонусы','Количество бонусов'],['доля рынка','Доля рынка'],['проникновение','Уровень проникновения'],
+    ['количество активных клиентов','Количество активных клиентов'],['количество новых клиентов','Количество новых клиентов'],['количество уникальных клиентов','Количество уникальных клиентов'],['объем транзакций','Объём транзакций'],['количество транзакций','Количество транзакций'],['средний объем платежей','Средний объём платежей'],['доля отказов','Доля отказов'],['конверсия','Конверсия']
+  ];
+  let indicatorCorrect=0, indicatorDangerous=0; const indicatorDetails=[];
+  for(const [q,expected] of indicatorCases){ const d=indicatorDecision(q); const got=d.status==='auto'?d.value:(d.candidates?.[0]?.entity?.name||''); const ok=got===expected; if(ok) indicatorCorrect++; if(d.status==='auto'&&!ok) indicatorDangerous++; indicatorDetails.push({q,expected,got,status:d.status,score:Math.round((d.confidence||0)*100),ok}); }
+  const indicatorSafety=['квантовая лояльность','цвет настроения клиента','скорость карандаша','индекс телепортации'];
+  let indicatorSafetyPass=0; for(const q of indicatorSafety){ if(indicatorDecision(q).status!=='auto') indicatorSafetyPass++; }
+  const indicatorAmbiguous=['клиенты','объем','доля','количество операций'];
+  let indicatorClarify=0; for(const q of indicatorAmbiguous){ if(indicatorDecision(q).status!=='auto') indicatorClarify++; }
+  const indPerfStart=performance.now(); for(let i=0;i<300;i++) resolveIndicatorCandidates(indicatorCases[i%indicatorCases.length][0],5); const indicatorLookupMs=(performance.now()-indPerfStart)/300;
+
   const perfStart=performance.now(); for(let i=0;i<300;i++) resolveProductCandidates(productCases[i%productCases.length][0],5); const lookupMs=(performance.now()-perfStart)/300;
   const drvStart=performance.now(); for(let i=0;i<300;i++) searchScaleDrivers({indicator:'Количество выдач',product:'Потребительский кредит',channel:'Онлайн',segment:'Массовый'},5); const driverMs=(performance.now()-drvStart)/300;
   const totalPass=correct+safetyPass+ambiguityPass+channelPass+segmentPass;
   return {
-    products:SCALE_PRODUCTS.length,channels:SCALE_CHANNELS.length,segments:SCALE_SEGMENTS.length,drivers:SCALE_DRIVERS.length,
+    products:SCALE_PRODUCTS.length,indicators:SCALE_INDICATORS.length,channels:SCALE_CHANNELS.length,segments:SCALE_SEGMENTS.length,drivers:SCALE_DRIVERS.length,
     totalChecks:100,totalPass,overallRate:totalPass/100,productCases:productCases.length,productAccuracy:correct/productCases.length,dangerousAuto:dangerous,
     safetyRate:safetyPass/safetyQueries.length,ambiguityRate:ambiguityPass/ambiguityQueries.length,channelRate:channelPass/channelQueries.length,segmentRate:segmentPass/segmentQueries.length,
-    avgProductLookupMs:lookupMs,avgDriverSearchMs:driverMs,details
+    avgProductLookupMs:lookupMs,avgIndicatorLookupMs:indicatorLookupMs,avgDriverSearchMs:driverMs,indicatorAccuracy:indicatorCorrect/indicatorCases.length,indicatorDangerousAuto:indicatorDangerous,indicatorSafetyRate:indicatorSafetyPass/indicatorSafety.length,indicatorClarificationSafety:indicatorClarify/indicatorAmbiguous.length,indicatorDetails,details
   };
 }
 const PL_ARTICLES = ['Чистый процентный доход','Расходы на резервы','Чистый комиссионный доход','Операционные доходы','Прочие доходы','Прочие расходы'];
@@ -637,7 +691,7 @@ function normalizeLlmData(data){
 async function callOpenRouter(userText, candidate={}, expectedStep=''){
   const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Извлекай параметры из сообщения пользователя и не выдумывай то, чего нет в тексте.
 
-Показатели из справочника: ${indicatorNames().join(', ')}. Если смысл точно соответствует одному из них, используй точное название из справочника. Если пользователь явно называет другой показатель, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный показатель похожим. В частности: «доля рынка» = «Доля рынка», «уровень проникновения» = «Уровень проникновения», «объём выдач» = «Объём выдач».
+Кандидаты показателя предварительно найдены retrieval-слоем: ${candidatePromptList(userText).indicators.join(', ') || 'нет уверенных кандидатов'}. Выбирай indicator только из этого короткого списка, если смысл однозначен. Если есть несколько близких показателей — indicator=null, чтобы приложение уточнило. Если подходящего показателя нет, верни формулировку пользователя как услышал — не подменяй её похожим показателем.
 Кандидаты продукта предварительно найдены retrieval-слоем: ${candidatePromptList(userText).products.join(', ') || 'нет уверенных кандидатов'}. Выбирай product ТОЛЬКО из этого короткого списка и только если смысл однозначен. Если кандидатов нет или есть несколько правдоподобных вариантов — product=null. Не подменяй неизвестный продукт похожим. Если пользователь говорит только «кредиты», «кредит», «по кредитам» без конкретного вида кредита — product=null. Если говорит только «страховка», «страхование», «по страховкам» без конкретного страхового продукта — product=null.
 Тип эффекта: Доходы или Расходы. База расчёта: 1, 1000, 1000000 или 1000000000. Единицу измерения НЕ определяй: она является атрибутом показателя и берётся приложением только из справочника показателей.
 Кандидаты каналов: ${candidatePromptList(userText).channels.join(', ') || 'нет'}. Кандидаты сегментов: ${candidatePromptList(userText).segments.join(', ') || 'нет'}. Для канала и сегмента используй только найденный справочный вариант, если он явно назван пользователем; иначе null.

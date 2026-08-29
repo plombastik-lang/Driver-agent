@@ -8,6 +8,7 @@ const LLM_API_URL = 'https://driver-agent-api.plombastik.workers.dev';
 const AUTH_TOKEN_KEY = 'driver-agent.auth.token.v1';
 const AUTH_EXPIRES_KEY = 'driver-agent.auth.expires.v1';
 let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
+let lastCreatedDriverId = null;
 
 function authHeaders(extra={}){
   return {...extra, ...(authToken ? {Authorization:`Bearer ${authToken}`} : {})};
@@ -211,8 +212,17 @@ function detect(text) {
   if (t.includes('расход') || t.includes('сокращ') || t.includes('не найм') || t.includes('ненайм')) effectType = 'Расходы';
   else if (t.includes('доход')) effectType = 'Доходы';
 
-  const productGroup = !product && t.includes('кредит') ? 'credit' : (!product && (t.includes('страхов') || t.includes('страхован')) ? 'insurance' : null);
-  return { indicator, product, effectType, productGroup };
+  // Если в одном запросе смешаны родовая категория и другой конкретный продукт,
+  // не угадываем основной продукт. Например: «страховки в кредитных картах».
+  const genericInsurance = t.includes('страхов') || t.includes('страхован');
+  const genericCredit = t.includes('кредит');
+  let productChoices = null;
+  if (genericInsurance && product && !['ОСАГО','КАСКО'].includes(product)) {
+    productChoices = ['ОСАГО','КАСКО',product];
+    product = null;
+  }
+  const productGroup = productChoices ? 'ambiguous' : (!product && genericCredit ? 'credit' : (!product && genericInsurance ? 'insurance' : null));
+  return { indicator, product, effectType, productGroup, productChoices };
 }
 function normalizeText(value){ return String(value||'').trim().toLowerCase().replace(/ё/g,'е').replace(/[–—-]/g,' ').replace(/\s+/g,' '); }
 function canonicalFromList(value, list) {
@@ -471,6 +481,7 @@ function mergeLlmCandidate(data){
   if(oldIdentity!==newIdentity){ delete flow.duplicateChecked; delete flow.duplicateId; }
 }
 async function processUserText(text){
+  if(lastCreatedDriverId){ lastCreatedDriverId=null; renderContextActions(); }
   if(!flow){ const quick=detect(text); if(quick.productGroup){ startFlow(text); return; } }
   setLlmBusy(true);
   try{
@@ -584,6 +595,9 @@ function continueFlow() {
   }
   if(c.newIndicator && !c.unit) return ask('unit','Укажи единицу измерения нового показателя.',['шт.','₽','%','Другое']);
   if(!c.newIndicator) c.unit = unitFor(c.indicator);
+  if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) {
+    return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices);
+  }
   if (!c.product) return ask('product', 'К какому продукту относится драйвер?', PRODUCTS);
   if (rejectUnknownProduct(c.product)) return;
 
@@ -665,7 +679,7 @@ function handleFlowAnswer(text) {
   if (flow.step === 'indicator') c.indicator = text.trim();
   else if (flow.step === 'unit') { if(text.trim()==='Другое') return ask('unitCustom','Напиши единицу измерения нового показателя.'); c.unit=text.trim(); }
   else if (flow.step === 'unitCustom') c.unit=text.trim();
-  else if (flow.step === 'product') { c.product = text.trim(); c.productGroup=''; }
+  else if (flow.step === 'product') { c.product = text.trim(); c.productGroup=''; c.productChoices=null; }
   else if (flow.step === 'effectType') c.effectType = normalizeEffect(text);
   else if (flow.step === 'channel') c.channel = text.trim();
   else if (flow.step === 'segment') c.segment = text.trim();
@@ -776,8 +790,9 @@ function finalizeDriver() {
   if(!indicator){ indicator={name:c.indicator,unit:c.unit,status:'Подготовлен'}; indicatorRegistry.push(indicator); }
   const needsApproval = indicator.status==='Подготовлен';
   const driver={ id:String(Date.now()), name:buildDriverName(c), indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', calcMethod:c.calcMethod||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', modelId:c.modelId||'', modelParams:c.modelParams||null, plAllocations:c.plAllocations||[], incrementMode:c.incrementMode||inferIncrementMode(c), channel:c.channel||'', segment:c.segment||'', status:needsApproval?'На согласовании':'Готов' };
-  drivers.unshift(driver); flow=null; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress(); renderContextActions();
+  drivers.unshift(driver); flow=null; lastCreatedDriverId=driver.id; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress();
   addMessage('agent', needsApproval ? `Готово. «${driver.name}» создан и направлен методологу на согласование. Новый показатель «${indicator.name}» подготовлен и уже виден в реестре показателей.` : `Готово. «${driver.name}» создан со статусом «Готов».`);
+  renderContextActions();
   toast('Драйвер создан');
 }
 function cancelFlow() {
@@ -791,7 +806,7 @@ function renderMessages() {
 }
 function renderContextActions() {
   const el=document.getElementById('contextActions');
-  if (!flow) { el.innerHTML=''; return; }
+  if (!flow) { el.innerHTML=lastCreatedDriverId?`<button data-flow-action="openCreated">Открыть карточку драйвера</button>`:''; return; }
   if(flow.step==='newIndicator'){
     el.innerHTML=`<button data-flow-action="confirmNewIndicator">Продолжить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='duplicate') {
@@ -978,6 +993,11 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   const value=e.target.dataset.flowValue; const action=e.target.dataset.flowAction;
   if(value){ addMessage('user',value); handleFlowAnswer(value); return; }
   if(!action) return;
+  if(action==='openCreated'){
+    const id=lastCreatedDriverId; lastCreatedDriverId=null; renderContextActions();
+    if(id){ switchTab('registry'); setTimeout(()=>openDriver(id),120); }
+    return;
+  }
   const actionLabels={
     cancel:'Отмена', confirmNewIndicator:'Продолжить', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
     continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', confirmModel:'Подтвердить модель',

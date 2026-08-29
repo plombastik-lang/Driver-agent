@@ -1,7 +1,7 @@
 {
   "name": "Driver Agent — агент управления драйверами",
   "short_name": "Driver Agent",
-  "description": "Прототип агента управления драйверами v4.2",
+  "description": "Прототип агента управления драйверами v4.9",
   "start_url": "./?v=3.6",
   "scope": "./",
   "display": "standalone",

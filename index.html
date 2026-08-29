@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=4.7" />
+  <link rel="stylesheet" href="styles.css?v=4.9" />
   <title>Driver Agent</title>
 </head>
 <body class="auth-pending">
@@ -40,7 +40,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <div class="top-actions"><span class="version-pill">v4.8</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
+      <div class="top-actions"><span class="version-pill">v4.9</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
     </header>
 
     <section class="summary-card">
@@ -63,6 +63,7 @@
       </div>
       <div id="progress" class="progress-card" hidden></div>
       <div id="messages" class="messages"></div>
+      <div id="quickStart" class="quick-actions"><button type="button" data-quick="create">Создать драйвер</button><button type="button" data-quick="find">Найти существующий</button><button type="button" data-quick="update">Изменить стоимость</button></div>
       <div id="contextActions" class="context-actions"></div>
       <form id="composer" class="composer">
         <textarea id="prompt" rows="2" placeholder="Например: создай драйвер количества выдач по ипотеке"></textarea>

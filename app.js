@@ -254,8 +254,14 @@ function incrementModeDescription(v){
 function isPlArticle(value){ return PL_ARTICLES.some(x=>analyticsKey(x)===analyticsKey(value)); }
 function similarDrivers(c) {
   if (!c.indicator && !c.product) return [];
-  return drivers.filter(d => (c.indicator && d.indicator === c.indicator) || (c.product && d.product === c.product)).slice(0,3);
+  return drivers.map(d=>{
+    const sameIndicator=!!c.indicator && d.indicator===c.indicator;
+    const sameProduct=!!c.product && d.product===c.product;
+    const score=sameIndicator&&sameProduct?3:sameIndicator?2:sameProduct?1:0;
+    return {d,score,sameIndicator,sameProduct};
+  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score).slice(0,3);
 }
+function similarKind(x){ return x.score===3?'Максимально похожий':x.score===2?'Похожий драйвер':'Аналог по продукту'; }
 function moneyNumber(v){ const n=Number(String(v??'').replace(/\s/g,'').replace(',','.')); return Number.isFinite(n)?n:0; }
 function formatMoney(v){ return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(moneyNumber(v)); }
 function profileTotal(profile){ return (profile||[]).reduce((sum,v)=>sum+moneyNumber(v),0); }
@@ -612,8 +618,8 @@ function continueFlow() {
     }
     const similar = similarDrivers(c);
     if (similar.length) {
-      flow.similarIds=similar.map(x=>x.id); flow.step='similar'; save();
-      addMessage('agent', `Нашёл ${similar.length} похожих ${similar.length===1?'драйвер':'драйвера'}. Посмотри их перед созданием нового — возможно, нужный уже есть.`);
+      flow.similarIds=similar.map(x=>x.d.id); flow.similarMeta=similar.map(x=>({id:x.d.id,score:x.score})); flow.step='similar'; save();
+      addMessage('agent', `Нашёл ${similar.length} ${similar.length===1?'вариант':'варианта'} в реестре. Сначала показываю самые близкие.`);
       renderContextActions(); renderProgress(); return;
     }
   }
@@ -628,7 +634,7 @@ function continueFlow() {
   if(!c.calcMethod && model){
     flow.step='modelChoice'; flow.modelId=model.id; save();
     const extra=c.indicator==='Количество выдач'?' + средний чек':'';
-    addMessage('agent', `Есть модель «${model.title}». Параметры: ${model.id==='credit_income_v2'?`маржа, риск, погашение${extra}`:'коэффициент перевода сборов'}. Использовать её?`);
+    addMessage('agent', `Для этого драйвера есть модель «${model.title}». Рассчитать стоимость по ней?`);
     renderContextActions(); renderProgress(); return;
   }
   if(c.calcMethod==='model' && !c.base){ c.base=defaultModelBase(c,model); save(); }
@@ -653,11 +659,9 @@ function continueFlow() {
       const result=calculateModel(c); const profile=result.profile;
       c.costProfile=profile; c.plAllocations=result.allocations; c.cost=String(profileTotal(profile)); c.costLogicText=modelLogic(c); c.businessRationale=modelBusinessRationale(c);
       flow.step='modelConfirm'; save();
-      addMessage('agent', `Готово по модели «${model.title}»: ${profile.length} мес., итог ${formatMoney(profileTotal(profile))} ₽.
-Исходные значения — из прогнозной модели, среднее за последние 3 месяца прогнозного года.
-${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)}: ${formatMoney(profileTotal(a.profile||[]))} ₽`).join(' · ')}
-
-Подтвердить расчёт?`);
+      addMessage('agent', `Стоимость рассчитана: ${formatMoney(profileTotal(profile))} ₽ на ${baseLabel(c.base)} ${c.unit}.
+Профиль: ${profile.length} мес. · модель «${model.title}».
+${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)} ${formatMoney(profileTotal(a.profile||[]))} ₽`).join(' · ')}`, 'result');
       renderContextActions(); renderProgress(); return;
     }
     return showPreview();
@@ -801,7 +805,7 @@ function cancelFlow() {
 
 function renderMessages() {
   const el=document.getElementById('messages');
-  el.innerHTML=messages.map(m=>`<div class="message ${m.role} ${m.kind==='preview'?'preview-message':''}"><span class="label">${m.role==='user'?'Вы':'Агент'}</span>${escapeHtml(m.text)}</div>`).join('');
+  el.innerHTML=messages.map(m=>`<div class="message ${m.role} ${['preview','result'].includes(m.kind)?'preview-message':''}"><span class="label">${m.role==='user'?'Вы':'Агент'}</span>${escapeHtml(m.text)}</div>`).join('');
   requestAnimationFrame(()=>{ el.scrollTop=el.scrollHeight; });
 }
 function renderContextActions() {
@@ -815,11 +819,12 @@ function renderContextActions() {
     el.innerHTML=`<button data-flow-action="changeProduct">Другой продукт</button><button data-flow-action="addChannel" class="secondary">Добавить / изменить канал</button><button data-flow-action="addSegment" class="secondary">Добавить / изменить сегмент</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='similar') {
     const sims=(flow.similarIds||[]).map(id=>drivers.find(d=>d.id===id)).filter(Boolean);
-    el.innerHTML=sims.map(d=>`<div class="similar-card"><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(costSummary(d))} за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</span><button data-flow-action="useSimilar" data-driver-id="${d.id}">Использовать</button></div>`).join('')+`<button data-flow-action="continueNew" class="secondary">Ни один не подходит — создать новый</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+    const meta=new Map((flow.similarMeta||[]).map(x=>[x.id,x.score]));
+    el.innerHTML=sims.map(d=>`<div class="similar-card"><small>${escapeHtml(similarKind({score:meta.get(d.id)||1}))}</small><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(costSummary(d))} за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</span><button data-flow-action="useSimilar" data-driver-id="${d.id}">Открыть</button></div>`).join('')+`<button data-flow-action="continueNew" class="secondary">Ни один не подходит — создать новый</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='modelChoice') {
     el.innerHTML=`<button data-flow-value="Использовать модель">Использовать модель</button><button data-flow-value="Задать свою логику" class="secondary">Задать свою логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='modelConfirm') {
-    el.innerHTML=`<button data-flow-action="confirmModel">✓ Подтвердить модель</button><button data-flow-action="redoModel" class="secondary">Изменить параметры</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+    el.innerHTML=`<button data-flow-action="confirmModel">Рассчитать</button><button data-flow-action="redoModel" class="secondary">Параметры</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='formulaConfirm') {
     el.innerHTML=`<button data-flow-action="confirmFormula">✓ Подтвердить расчёт</button><button data-flow-action="redoFormula" class="secondary">Изменить логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='preview') {
@@ -1000,7 +1005,7 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   }
   const actionLabels={
     cancel:'Отмена', confirmNewIndicator:'Продолжить', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
-    continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', confirmModel:'Подтвердить модель',
+    continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', confirmModel:'Рассчитать',
     redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить'
   };
   if(action==='useSimilar'){
@@ -1026,6 +1031,12 @@ document.getElementById('contextActions').addEventListener('click',e=>{
 });
 document.getElementById('modelList')?.addEventListener('click',e=>{ const row=e.target.closest('.model-row'); if(!row)return; const item=row.closest('[data-model-id]'); expandedModelId=expandedModelId===item.dataset.modelId && !focusedModelId ? null : item.dataset.modelId; renderModels(); });
 document.getElementById('modelShowAll')?.addEventListener('click',()=>{ focusedModelId=null; expandedModelId=null; renderModels(); });
+document.getElementById('quickStart')?.addEventListener('click',e=>{
+  const action=e.target.dataset.quick; if(!action)return;
+  if(action==='create'){ const input=document.getElementById('prompt'); input.value='Создай драйвер '; input.focus(); }
+  if(action==='find'){ switchTab('registry'); setTimeout(()=>document.getElementById('registrySearch')?.focus(),120); }
+  if(action==='update'){ switchTab('registry'); toast('Выбери драйвер и открой его карточку'); }
+});
 document.getElementById('registrySearch').addEventListener('input',renderRegistry);
 document.getElementById('driverList').addEventListener('click',e=>{
   const row=e.target.closest('[data-open-driver]');

@@ -133,9 +133,9 @@ function setLlmBusy(busy){
 }
 function renderLlmSettings(){
   const status=document.getElementById('llmStatus');
-  if(status){ status.textContent='Общая LLM'; status.className='llm-status online'; }
+  if(status){ status.textContent='Доступно'; status.className='llm-status online'; }
   const meta=document.getElementById('llmMeta');
-  if(meta) meta.textContent=`Модель: ${LLM_MODEL} · через защищённый API`;
+  if(meta) meta.textContent='Используй проверку, если агент перестал отвечать как обычно.';
 }
 function cleanJsonText(text){
   const cleaned=String(text||'').trim().replace(/^```(?:json)?\s*/i,'').replace(/\s*```$/,'').trim();
@@ -234,12 +234,20 @@ async function processUserText(text){
 }
 async function testLlmConnection(){
   const btn=document.getElementById('testLlm');
+  const meta=document.getElementById('llmMeta');
+  const status=document.getElementById('llmStatus');
   if(btn){btn.disabled=true;btn.textContent='Проверяю…';}
   try{
     await callOpenRouter('Создай драйвер количества клиентов по ипотеке',{},'');
-    toast('LLM отвечает');
-    document.getElementById('llmMeta').textContent=`Модель: ${LLM_MODEL} · соединение проверено`;
-  }catch(err){ toast(`Ошибка: ${err.message}`); }
+    toast('Соединение работает');
+    if(meta) meta.textContent='Соединение проверено — всё работает.';
+    if(status) status.textContent='Доступно';
+  }catch(err){
+    console.warn('Connection check failed:',err);
+    toast('Не удалось подключиться. Попробуйте ещё раз');
+    if(meta) meta.textContent='Не удалось проверить соединение. Попробуйте ещё раз.';
+    if(status) status.textContent='Недоступно';
+  }
   finally{if(btn){btn.disabled=false;btn.textContent='Проверить';}}
 }
 

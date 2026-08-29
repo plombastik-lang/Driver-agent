@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=3.2" />
+  <link rel="stylesheet" href="styles.css?v=3.3" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v3.2</span>
+      <span class="version-pill">v3.3</span>
     </header>
 
     <section class="summary-card">
@@ -112,14 +112,13 @@
     <section id="settings" class="panel">
       <div class="llm-card">
         <div class="llm-head">
-          <div><span class="mini-label">Интеграция</span><h2>LLM</h2></div>
-          <span id="llmStatus" class="llm-status online">Общая LLM</span>
+          <div><span class="mini-label">Сервис</span><h2>Проверка соединения</h2></div>
+          <span id="llmStatus" class="llm-status online">Доступно</span>
         </div>
-        <p class="llm-copy">LLM подключена через защищённый API прототипа. Коллегам не нужен отдельный API-ключ — достаточно открыть общую ссылку на Driver Agent.</p>
         <div class="llm-actions">
-          <button id="testLlm" type="button" class="secondary-button">Проверить соединение</button>
+          <button id="testLlm" type="button" class="secondary-button">Проверить</button>
         </div>
-        <div id="llmMeta" class="llm-meta">Модель: openrouter/free · через защищённый API</div>
+        <div id="llmMeta" class="llm-meta">Используй проверку, если агент перестал отвечать как обычно.</div>
       </div>
 
       <div class="section-head"><div><h2>Справочники</h2><p>Тестовые данные, которые агент использует при разборе запроса.</p></div></div>
@@ -136,6 +135,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=3.2"></script>
+  <script src="app.js?v=3.3"></script>
 </body>
 </html>

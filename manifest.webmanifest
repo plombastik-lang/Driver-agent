@@ -1,8 +1,8 @@
 {
   "name": "Driver Agent — агент управления драйверами",
   "short_name": "Driver Agent",
-  "description": "Прототип агента управления драйверами v3.2",
-  "start_url": "./?v=3.2",
+  "description": "Прототип агента управления драйверами v3.3",
+  "start_url": "./?v=3.3",
   "scope": "./",
   "display": "standalone",
   "background_color": "#070b14",

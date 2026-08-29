@@ -205,8 +205,15 @@ function mergeLlmCandidate(data){
   if(!flow) return;
   const c=flow.candidate;
   const oldIdentity=`${c.indicator||''}|${c.product||''}`;
+  const previousUnit=c.unit;
   Object.assign(c,data);
-  if(c.indicator) c.unit=unitFor(c.indicator);
+  if(c.indicator){
+    const registryUnit=unitFor(c.indicator);
+    // Для существующего показателя единица всегда приходит из справочника.
+    // Для нового показателя сохраняем уже введённую пользователем единицу
+    // и не позволяем очередному ответу LLM затереть её null-значением.
+    c.unit=registryUnit || previousUnit || c.unit || null;
+  }
   const newIdentity=`${c.indicator||''}|${c.product||''}`;
   if(oldIdentity!==newIdentity){ delete flow.duplicateChecked; delete flow.duplicateId; }
 }
@@ -356,8 +363,8 @@ function finalizeDriver() {
   let indicator=indicatorRecord(c.indicator);
   if(!indicator){ indicator={name:c.indicator,unit:c.unit,status:'Подготовлен'}; indicatorRegistry.push(indicator); }
   const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, channel:c.channel||'', segment:c.segment||'', status:'На согласовании' };
-  drivers.unshift(driver); flow=null; save(); renderRegistry(); updateSummary(); renderProgress(); renderContextActions();
-  addMessage('agent', `Готово. «${driver.name}» создан и направлен методологу на согласование.${indicator.status==='Подготовлен' ? ` Новый показатель «${indicator.name}» автоматически подготовлен по правилам справочника.` : ''}`);
+  drivers.unshift(driver); flow=null; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress(); renderContextActions();
+  addMessage('agent', `Готово. «${driver.name}» создан и направлен методологу на согласование.${indicator.status==='Подготовлен' ? ` Новый показатель «${indicator.name}» автоматически подготовлен по правилам справочника и уже виден в реестре показателей.` : ''}`);
   toast('Драйвер создан');
 }
 function cancelFlow() {

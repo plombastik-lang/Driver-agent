@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=5.0" />
+  <link rel="stylesheet" href="styles.css?v=5.1" />
   <title>Driver Agent</title>
 </head>
 <body class="auth-pending">
@@ -40,7 +40,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <div class="top-actions"><span class="version-pill">v5.0</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
+      <div class="top-actions"><span class="version-pill">v5.1</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
     </header>
 
     <section class="summary-card">
@@ -210,6 +210,10 @@
         <div><strong>Проверка соединения</strong><p id="llmMeta">Используй, если агент перестал отвечать как обычно.</p></div>
         <button id="testLlm" type="button" class="secondary-button">Проверить</button>
       </div>
+      <div class="settings-block scale-test-block">
+        <div><strong>Масштабный тест</strong><p>Проверка retrieval на 1 500 продуктах, 100 каналах, 50 сегментах и 1 500 драйверах.</p><div id="scaleTestResult" class="scale-test-result">Не запускался</div></div>
+        <button id="runScaleTest" type="button" class="secondary-button">Запустить</button>
+      </div>
       <div class="settings-block">
         <div><strong>Демо-данные</strong><p>Вернуть исходный набор драйверов и очистить текущий диалог.</p></div>
         <button id="resetButton" type="button" class="secondary-button">Сбросить</button>
@@ -223,6 +227,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=5.0"></script>
+  <script src="app.js?v=5.1"></script>
 </body>
 </html>

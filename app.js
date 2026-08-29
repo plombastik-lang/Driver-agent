@@ -60,6 +60,168 @@ for (const [name,unit] of Object.entries(INDICATOR_META)) if(!indicatorRegistry.
 function indicatorNames(){ return indicatorRegistry.map(x=>x.name); }
 function indicatorRecord(name){ const c=canonicalFromList(name, indicatorNames()); return c ? indicatorRegistry.find(x=>x.name===c) : null; }
 const PRODUCTS = ['Ипотечное кредитование','Потребительский кредит','Автокредит','Образовательный кредит','Дебетовые карты','Кредитные карты','Платежи','Переводы','ОСАГО','КАСКО','Накопительные счета','Срочные счета'];
+
+
+// Масштабируемый слой разрешения НСИ: в промышленном варианте эти каталоги
+// должны приходить из backend/MDM. В прототипе держим 1500 продуктов,
+// 100 каналов и 50 сегментов в памяти, чтобы проверять поведение на масштабе.
+const PRODUCT_ALIASES = {
+  'Ипотечное кредитование':['ипотека','ипотечный кредит','ипотечное кредитование'],
+  'Потребительский кредит':['потреб','потребкредит','потребительский кредит','кредит наличными'],
+  'Автокредит':['автокредит','авто кредит','кредит на авто'],
+  'Образовательный кредит':['образовательный кредит','кредит на образование'],
+  'Дебетовые карты':['дебетовая карта','дебетовые карты','дебетовка'],
+  'Кредитные карты':['кредитная карта','кредитные карты','кредитка','кредитки'],
+  'Платежи':['платеж','платежи','оплата'],
+  'Переводы':['перевод','переводы'],
+  'ОСАГО':['осаго','автогражданка'],
+  'КАСКО':['каско'],
+  'Накопительные счета':['накопительный счет','накопительные счета','накопительный счёт'],
+  'Срочные счета':['срочный счет','срочные счета','вклад','депозит']
+};
+const PRODUCT_FAMILIES=['Кредитование','Карты','Платежи','Переводы','Сбережения','Инвестиции','Страхование','Эквайринг','Лизинг','Факторинг','Зарплатные решения','Торговое финансирование','Сервисы для бизнеса','Премиальное обслуживание','Доверительное управление'];
+const PRODUCT_MODIFIERS=['Базовый','Премиум','Цифровой','Партнёрский','Корпоративный','Массовый','Онлайн','Классический','Индивидуальный','Специальный','Семейный','Молодёжный','Зарплатный','Международный','Региональный','Технологический'];
+function buildScaleProducts(){
+  const out=PRODUCTS.map((name,i)=>({id:`core-${i+1}`,name,aliases:PRODUCT_ALIASES[name]||[],group: ['ОСАГО','КАСКО'].includes(name)?'Страхование':(['Ипотечное кредитование','Потребительский кредит','Автокредит','Образовательный кредит'].includes(name)?'Кредитование':'Базовые продукты'),synthetic:false}));
+  let n=1;
+  for(const family of PRODUCT_FAMILIES){
+    for(const mod of PRODUCT_MODIFIERS){
+      for(let v=1; v<=7 && out.length<1500; v++){
+        const name=`${family} ${mod} ${String(v).padStart(2,'0')}`;
+        if(!out.some(x=>x.name===name)) out.push({id:`scale-p-${String(n++).padStart(4,'0')}`,name,aliases:[],group:family,synthetic:true});
+      }
+      if(out.length>=1500) break;
+    }
+    if(out.length>=1500) break;
+  }
+  while(out.length<1500){ const i=out.length+1; out.push({id:`scale-p-${String(n++).padStart(4,'0')}`,name:`Банковский продукт ${String(i).padStart(4,'0')}`,aliases:[],group:'Прочие',synthetic:true}); }
+  return out.slice(0,1500);
+}
+const SCALE_PRODUCTS=buildScaleProducts();
+const CORE_CHANNELS=['Онлайн','Мобильное приложение','Партнёрский','Отделение','Колл-центр','Интернет-банк','API','Маркетплейс','Банкомат','Терминал'];
+const SCALE_CHANNELS=[...CORE_CHANNELS,...Array.from({length:90},(_,i)=>`Канал ${String(i+11).padStart(3,'0')}`)].slice(0,100);
+const CORE_SEGMENTS=['Массовый','Премиальный','Малый бизнес','Средний бизнес','Крупный бизнес','Молодёжь','Семьи','Зарплатные клиенты'];
+const SCALE_SEGMENTS=[...CORE_SEGMENTS,...Array.from({length:42},(_,i)=>`Сегмент ${String(i+9).padStart(2,'0')}`)].slice(0,50);
+
+function nsTokenize(value){
+  return normalizeText(value).replace(/[^a-zа-я0-9 ]/gi,' ').split(/\s+/).filter(Boolean).map(t=>t
+    .replace(/(иями|ями|ами|ого|ему|ому|ыми|ими|ая|яя|ое|ее|ые|ие|ый|ий|ой|ам|ям|ах|ях|ов|ев|ей|ом|ем|у|ю|а|я|ы|и|е|о)$/i,''));
+}
+function editSimilarity(a,b){
+  a=String(a||''); b=String(b||''); if(a===b) return 1; if(!a||!b) return 0;
+  if(a.length===b.length){ for(let i=0;i<a.length-1;i++){ if(a[i]!==b[i] && a[i]===b[i+1] && a[i+1]===b[i] && a.slice(0,i)===b.slice(0,i) && a.slice(i+2)===b.slice(i+2)) return 0.92; } }
+  const prev=Array.from({length:b.length+1},(_,i)=>i), cur=new Array(b.length+1);
+  for(let i=1;i<=a.length;i++){ cur[0]=i; for(let j=1;j<=b.length;j++) cur[j]=Math.min(cur[j-1]+1,prev[j]+1,prev[j-1]+(a[i-1]===b[j-1]?0:1)); for(let j=0;j<=b.length;j++) prev[j]=cur[j]; }
+  return 1-prev[b.length]/Math.max(a.length,b.length);
+}
+function candidateScore(query, entity){
+  const qn=normalizeText(query), names=[entity.name,...(entity.aliases||[])];
+  let best=0;
+  for(const raw of names){
+    const n=normalizeText(raw); if(!n) continue;
+    if(qn===n) best=Math.max(best,1);
+    if(qn.includes(n) && n.length>=4) best=Math.max(best,0.98);
+    const qt=new Set(nsTokenize(query)), et=new Set(nsTokenize(raw));
+    if(!et.size) continue;
+    let matched=0, fuzzySum=0; for(const t of et){ const bestToken=[...qt].reduce((m,q)=>Math.max(m, q===t?1:((Math.min(q.length,t.length)>=4 && (q.startsWith(t)||t.startsWith(q)))?0.94:editSimilarity(q,t))),0); if(bestToken>=0.78) matched++; fuzzySum+=bestToken; }
+    const coverage=matched/et.size;
+    const fuzzyCoverage=fuzzySum/et.size;
+    const union=new Set([...qt,...et]).size || 1;
+    const jaccard=matched/union;
+    best=Math.max(best, Math.min(0.96, coverage*0.67 + fuzzyCoverage*0.18 + jaccard*0.15));
+  }
+  return best;
+}
+function resolveCandidates(query, catalog, limit=5, minScore=0.44){
+  return catalog.map(entity=>({entity,score:candidateScore(query,entity)})).filter(x=>x.score>=minScore).sort((a,b)=>b.score-a.score || a.entity.name.localeCompare(b.entity.name,'ru')).slice(0,limit);
+}
+function resolveProductCandidates(query,limit=5){ return resolveCandidates(query,SCALE_PRODUCTS,limit,0.44); }
+function resolveChannelCandidates(query,limit=5){ return resolveCandidates(query,SCALE_CHANNELS.map((name,i)=>({id:`ch-${i+1}`,name,aliases:[]})),limit,0.58); }
+function resolveSegmentCandidates(query,limit=5){ return resolveCandidates(query,SCALE_SEGMENTS.map((name,i)=>({id:`seg-${i+1}`,name,aliases:[]})),limit,0.58); }
+function productDecision(query){
+  const c=resolveProductCandidates(query,5);
+  if(!c.length) return {status:'none',candidates:[]};
+  const top=c[0], second=c[1];
+  if(top.score>=0.84 && (!second || top.score-second.score>=0.12)) return {status:'auto',value:top.entity.name,confidence:top.score,candidates:c};
+  if(top.score>=0.70) return {status:'clarify',confidence:top.score,candidates:c.filter(x=>x.score>=Math.max(0.65,top.score-0.12)).slice(0,5)};
+  return {status:'none',confidence:top.score,candidates:c};
+}
+function candidatePromptList(query){
+  const products=resolveProductCandidates(query,7).map(x=>`${x.entity.name} (${Math.round(x.score*100)}%)`);
+  const channels=resolveChannelCandidates(query,5).map(x=>x.entity.name);
+  const segments=resolveSegmentCandidates(query,5).map(x=>x.entity.name);
+  return {products,channels,segments};
+}
+function buildScaleDrivers(){
+  const inds=indicatorNames(); const out=[];
+  for(let i=0;i<1500;i++){
+    const p=SCALE_PRODUCTS[(i*37)%SCALE_PRODUCTS.length];
+    const indicator=inds[(i*5)%inds.length];
+    const channel=i%3===0?SCALE_CHANNELS[(i*11)%SCALE_CHANNELS.length]:'';
+    const segment=i%4===0?SCALE_SEGMENTS[(i*7)%SCALE_SEGMENTS.length]:'';
+    out.push({id:`scale-d-${i+1}`,indicator,product:p.name,channel,segment,name:[indicator,p.name,channel,segment].filter(Boolean).join(' ')});
+  }
+  return out;
+}
+const SCALE_DRIVERS=buildScaleDrivers();
+function scaleDriverMatchScore(a,b){
+  let score=0;
+  if(analyticsKey(a.indicator)===analyticsKey(b.indicator)) score+=50;
+  if(analyticsKey(a.product)===analyticsKey(b.product)) score+=30;
+  if(analyticsKey(a.channel)===analyticsKey(b.channel)) score+=12;
+  if(analyticsKey(a.segment)===analyticsKey(b.segment)) score+=8;
+  return score;
+}
+function searchScaleDrivers(candidate,limit=5){ return SCALE_DRIVERS.map(d=>({d,score:scaleDriverMatchScore(candidate,d)})).filter(x=>x.score>=50).sort((a,b)=>b.score-a.score).slice(0,limit); }
+
+function runScaleBenchmark(){
+  const baseCases=[
+    ['ипотека','Ипотечное кредитование'],['ипотечный кредит','Ипотечное кредитование'],['потреб','Потребительский кредит'],['кредит наличными','Потребительский кредит'],
+    ['автокредит','Автокредит'],['кредит на образование','Образовательный кредит'],['дебетовка','Дебетовые карты'],['кредитка','Кредитные карты'],
+    ['кредитные карты','Кредитные карты'],['осаго','ОСАГО'],['автогражданка','ОСАГО'],['каско','КАСКО'],['накопительный счет','Накопительные счета'],['вклад','Срочные счета'],
+    ['платежи','Платежи'],['переводы','Переводы'],['создай драйвер объема выдач по ипотеке','Ипотечное кредитование'],['количество выдач потребкредит','Потребительский кредит'],
+    ['доля рынка по кредитным картам','Кредитные карты'],['клиенты дебетовой карты','Дебетовые карты'],['сборы осаго','ОСАГО'],['сборы каско','КАСКО'],
+    ['ипатека','Ипотечное кредитование'],['ипотка','Ипотечное кредитование'],['потребкредт','Потребительский кредит'],['потрб','Потребительский кредит'],
+    ['кридитка','Кредитные карты'],['кредитк','Кредитные карты'],['дебтовка','Дебетовые карты'],['осгао','ОСАГО'],['накопит счет','Накопительные счета'],['накопительный счт','Накопительные счета'],
+    ['платжи','Платежи'],['перевды','Переводы'],['создай количество выдач ипотка онлайн','Ипотечное кредитование'],['доля рынка по кридитке','Кредитные карты'],
+    ['клиенты дебтовки','Дебетовые карты'],['объем сборов осгао','ОСАГО']
+  ];
+  const syntheticCases=SCALE_PRODUCTS.filter(x=>x.synthetic).slice(120,140).map(x=>[`создай драйвер по продукту ${x.name}`,x.name]);
+  const sentenceCases=[
+    ['нужен драйвер клиентов по ипотеке','Ипотечное кредитование'],['драйвер продаж по кредитке','Кредитные карты'],['эффект по дебетовке','Дебетовые карты'],
+    ['расчет по кредиту наличными','Потребительский кредит'],['новый драйвер автогражданки','ОСАГО'],['показатель по накопительному счету','Накопительные счета'],
+    ['сделай драйвер по депозиту','Срочные счета'],['метрика по платежам','Платежи'],['метрика по переводам','Переводы'],['выдачи по автокредиту','Автокредит'],
+    ['выдачи образовательного кредита','Образовательный кредит'],['сборы по каско','КАСКО']
+  ];
+  const productCases=[...baseCases,...syntheticCases,...sentenceCases].slice(0,70);
+  let correct=0, dangerous=0; const details=[];
+  for(const [q,expected] of productCases){ const d=productDecision(q); const got=d.status==='auto'?d.value:(d.candidates?.[0]?.entity?.name||''); const ok=got===expected; if(ok) correct++; if(d.status==='auto'&&!ok) dangerous++; details.push({q,expected,got,status:d.status,score:Math.round((d.confidence||0)*100),ok}); }
+
+  const safetyQueries=['космический банкинг','зелёная луна','программа север','супер продукт икс','финансовый телепорт','новая сущность без справочника','альфа омега сервис','продукт мечты','неизвестный пакет услуг','квантовый счёт'];
+  let safetyPass=0; for(const q of safetyQueries){ const d=productDecision(q); if(d.status!=='auto') safetyPass++; }
+
+  const ambiguityQueries=[
+    ['страховки в кредитных картах','ambiguous'],['страхование по кредитке','ambiguous'],['кредит со страховкой','credit'],['карта со страховой защитой','insurance'],
+    ['выдачи кредитов','credit'],['драйвер по кредитам','credit'],['сборы по страховкам','insurance'],['страховой продукт','insurance'],
+    ['уровень проникновения страховок в кредитных картах','ambiguous'],['страхование держателей кредитных карт','ambiguous']
+  ];
+  let ambiguityPass=0; for(const [q,expectedGroup] of ambiguityQueries){ const d=detect(q); if(d.productGroup===expectedGroup) ambiguityPass++; }
+
+  const channelQueries=[['мобильное приложение','Мобильное приложение'],['онлайн','Онлайн'],['партнерский','Партнёрский'],['отделение','Отделение'],['колл центр','Колл-центр']];
+  let channelPass=0; for(const [q,e] of channelQueries){ const x=resolveChannelCandidates(q,1)[0]; if(x?.entity?.name===e) channelPass++; }
+  const segmentQueries=[['массовый','Массовый'],['премиальный','Премиальный'],['малый бизнес','Малый бизнес'],['средний бизнес','Средний бизнес'],['крупный бизнес','Крупный бизнес']];
+  let segmentPass=0; for(const [q,e] of segmentQueries){ const x=resolveSegmentCandidates(q,1)[0]; if(x?.entity?.name===e) segmentPass++; }
+
+  const perfStart=performance.now(); for(let i=0;i<300;i++) resolveProductCandidates(productCases[i%productCases.length][0],5); const lookupMs=(performance.now()-perfStart)/300;
+  const drvStart=performance.now(); for(let i=0;i<300;i++) searchScaleDrivers({indicator:'Количество выдач',product:'Потребительский кредит',channel:'Онлайн',segment:'Массовый'},5); const driverMs=(performance.now()-drvStart)/300;
+  const totalPass=correct+safetyPass+ambiguityPass+channelPass+segmentPass;
+  return {
+    products:SCALE_PRODUCTS.length,channels:SCALE_CHANNELS.length,segments:SCALE_SEGMENTS.length,drivers:SCALE_DRIVERS.length,
+    totalChecks:100,totalPass,overallRate:totalPass/100,productCases:productCases.length,productAccuracy:correct/productCases.length,dangerousAuto:dangerous,
+    safetyRate:safetyPass/safetyQueries.length,ambiguityRate:ambiguityPass/ambiguityQueries.length,channelRate:channelPass/channelQueries.length,segmentRate:segmentPass/segmentQueries.length,
+    avgProductLookupMs:lookupMs,avgDriverSearchMs:driverMs,details
+  };
+}
 const PL_ARTICLES = ['Чистый процентный доход','Расходы на резервы','Чистый комиссионный доход','Операционные доходы','Прочие доходы','Прочие расходы'];
 
 const seedDrivers = [
@@ -183,6 +345,8 @@ function toast(text) {
 
 function detect(text) {
   const t = text.toLowerCase().replace(/ё/g,'е');
+  const genericInsurance = t.includes('страхов') || t.includes('страхован');
+  const genericCredit = t.includes('кредит');
   let product = null;
   if (t.includes('ипотек')) product = 'Ипотечное кредитование';
   else if (t.includes('автокредит') || (t.includes('авто') && t.includes('кредит'))) product = 'Автокредит';
@@ -196,7 +360,15 @@ function detect(text) {
   else if ((t.includes('сроч') || t.includes('вклад') || t.includes('депозит')) && (t.includes('счет') || t.includes('счёт') || t.includes('вклад') || t.includes('депозит'))) product = 'Срочные счета';
   else if (t.includes('платеж')) product = 'Платежи';
   else if (t.includes('перевод')) product = 'Переводы';
-  else if (t.includes('кредит')) product = null;
+
+  // Если детерминированные правила не сработали — ищем не по полному
+  // справочнику в prompt, а по retrieval-слою и решаем по confidence.
+  let retrievalChoices=null;
+  if(!product && !(genericCredit && !/кредитк|кредитн.*карт/.test(t)) && !genericInsurance){
+    const decision=productDecision(text);
+    if(decision.status==='auto') product=decision.value;
+    else if(decision.status==='clarify') retrievalChoices=decision.candidates.map(x=>x.entity.name);
+  }
 
   let indicator = null;
   if ((t.includes('объем') || t.includes('объём')) && t.includes('выдач')) indicator = 'Объём выдач';
@@ -212,14 +384,14 @@ function detect(text) {
   if (t.includes('расход') || t.includes('сокращ') || t.includes('не найм') || t.includes('ненайм')) effectType = 'Расходы';
   else if (t.includes('доход')) effectType = 'Доходы';
 
-  // Если в одном запросе смешаны родовая категория и другой конкретный продукт,
-  // не угадываем основной продукт. Например: «страховки в кредитных картах».
-  const genericInsurance = t.includes('страхов') || t.includes('страхован');
-  const genericCredit = t.includes('кредит');
-  let productChoices = null;
+  let productChoices = retrievalChoices;
+  // Смешанные домены — всегда уточняем, даже если один из продуктов распознан точно.
   if (genericInsurance && product && !['ОСАГО','КАСКО'].includes(product)) {
     productChoices = ['ОСАГО','КАСКО',product];
     product = null;
+  }
+  if (genericInsurance && !product && (/кредитк/.test(t) || (t.includes('кредитн') && t.includes('карт')))) {
+    productChoices = ['ОСАГО','КАСКО','Кредитные карты'];
   }
   const productGroup = productChoices ? 'ambiguous' : (!product && genericCredit ? 'credit' : (!product && genericInsurance ? 'insurance' : null));
   return { indicator, product, effectType, productGroup, productChoices };
@@ -455,8 +627,9 @@ async function callOpenRouter(userText, candidate={}, expectedStep=''){
   const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Извлекай параметры из сообщения пользователя и не выдумывай то, чего нет в тексте.
 
 Показатели из справочника: ${indicatorNames().join(', ')}. Если смысл точно соответствует одному из них, используй точное название из справочника. Если пользователь явно называет другой показатель, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный показатель похожим. В частности: «доля рынка» = «Доля рынка», «уровень проникновения» = «Уровень проникновения», «объём выдач» = «Объём выдач».
-Продукт должен быть только из справочника: ${PRODUCTS.join(', ')}. Если в сообщении указан другой продукт, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный продукт похожим. Если пользователь говорит только «кредиты», «кредит», «по кредитам» без конкретного вида кредита — product=null. Если говорит только «страховка», «страхование», «по страховкам» без ОСАГО/КАСКО — product=null.
+Кандидаты продукта предварительно найдены retrieval-слоем: ${candidatePromptList(userText).products.join(', ') || 'нет уверенных кандидатов'}. Выбирай product ТОЛЬКО из этого короткого списка и только если смысл однозначен. Если кандидатов нет или есть несколько правдоподобных вариантов — product=null. Не подменяй неизвестный продукт похожим. Если пользователь говорит только «кредиты», «кредит», «по кредитам» без конкретного вида кредита — product=null. Если говорит только «страховка», «страхование», «по страховкам» без конкретного страхового продукта — product=null.
 Тип эффекта: Доходы или Расходы. База расчёта: 1, 1000, 1000000 или 1000000000. Единицу измерения НЕ определяй: она является атрибутом показателя и берётся приложением только из справочника показателей.
+Кандидаты каналов: ${candidatePromptList(userText).channels.join(', ') || 'нет'}. Кандидаты сегментов: ${candidatePromptList(userText).segments.join(', ') || 'нет'}. Для канала и сегмента используй только найденный справочный вариант, если он явно назван пользователем; иначе null.
 
 Верни ТОЛЬКО один JSON-объект без markdown и пояснений с ключами: indicator, product, effectType, base, cost, channel, segment. Для неизвестных параметров ставь null. Если пользователь отвечает коротко на уточняющий вопрос, учитывай поле, которое сейчас ожидается. Стоимость верни числом/строкой в рублях без знака валюты.`;
   const current=JSON.stringify(candidate||{});
@@ -574,7 +747,7 @@ function checkIndicator(indicator) {
 function rejectUnknownProduct(product) {
   const value=String(product||'').trim();
   if(!value) return false;
-  const canonical=canonicalFromList(value, PRODUCTS);
+  const canonical=canonicalFromList(value, SCALE_PRODUCTS.map(x=>x.name));
   if(canonical){ flow.candidate.product=canonical; return false; }
   addMessage('agent', `Продукт «${value}» не найден в справочнике. Создание драйвера завершено.`);
   flow=null; save(); renderContextActions(); renderProgress();
@@ -610,7 +783,7 @@ function continueFlow() {
   }
   if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS);
   if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS);
-  if (!c.product) return ask('product', 'К какому продукту относится драйвер?', PRODUCTS);
+  if (!c.product) return ask('product', 'К какому продукту относится драйвер? Напиши название обычным языком — я найду варианты в справочнике.');
   if (rejectUnknownProduct(c.product)) return;
 
   if (!flow.duplicateChecked) {
@@ -689,7 +862,7 @@ function handleFlowAnswer(text) {
   if (flow.step === 'indicator') c.indicator = text.trim();
   else if (flow.step === 'unit') { if(text.trim()==='Другое') return ask('unitCustom','Напиши единицу измерения нового показателя.'); c.unit=text.trim(); }
   else if (flow.step === 'unitCustom') c.unit=text.trim();
-  else if (flow.step === 'product') { c.product = text.trim(); c.productGroup=''; c.productChoices=null; }
+  else if (flow.step === 'product') { const pd=productDecision(text); if(pd.status==='auto') c.product=pd.value; else if(pd.status==='clarify'){ c.product=null; c.productChoices=pd.candidates.map(x=>x.entity.name); c.productGroup='ambiguous'; } else c.product=text.trim(); if(c.product){c.productGroup=''; c.productChoices=null;} }
   else if (flow.step === 'effectType') c.effectType = normalizeEffect(text);
   else if (flow.step === 'channel') c.channel = text.trim();
   else if (flow.step === 'segment') c.segment = text.trim();
@@ -1167,6 +1340,18 @@ document.getElementById('deleteDriver').addEventListener('click',()=>{
 });
 
 document.getElementById('testLlm')?.addEventListener('click',testLlmConnection);
+document.getElementById('runScaleTest')?.addEventListener('click',()=>{
+  const btn=document.getElementById('runScaleTest'); const out=document.getElementById('scaleTestResult');
+  if(btn){btn.disabled=true;btn.textContent='Тестирую…';}
+  requestAnimationFrame(()=>setTimeout(()=>{
+    try{
+      const r=runScaleBenchmark();
+      if(out) out.innerHTML=`<strong>${r.totalPass}/${r.totalChecks} проверок</strong> · product match: ${Math.round(r.productAccuracy*100)}% · ошибочных auto-match: ${r.dangerousAuto}<br>Неоднозначность: ${Math.round(r.ambiguityRate*100)}% · неизвестные: ${Math.round(r.safetyRate*100)}% · поиск: ${r.avgProductLookupMs.toFixed(1)} мс`;
+      toast('Масштабный тест завершён');
+    }catch(e){ console.warn(e); if(out) out.textContent='Не удалось выполнить тест'; }
+    if(btn){btn.disabled=false;btn.textContent='Запустить';}
+  },20));
+});
 function endCurrentSession(){
   const meaningful=messages.filter(m=>m.id!=='hello');
   if(meaningful.length){

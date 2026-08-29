@@ -199,3 +199,5 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
 /* v5.0: UX cleanup */
 .similar-card small{display:block;color:#8190c5;font-size:9px;text-transform:uppercase;letter-spacing:.09em;font-weight:850;margin-bottom:4px}
 .message.result-message,.message.preview-message{max-width:96%}
+.scale-test-result{margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted,#667085)}
+.scale-test-result strong{color:inherit}

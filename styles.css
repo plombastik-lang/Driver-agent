@@ -76,3 +76,4 @@ body.keyboard-open .chat-session-bar{display:none}body.keyboard-open #chat .prog
   .registry-row .badge{max-width:76px;overflow:hidden;text-overflow:ellipsis}
 }
 .profile-field{grid-column:1/-1}.profile-field textarea{width:100%;resize:vertical;min-height:88px}.field-hint{display:block;margin-top:6px;font-size:12px;color:var(--muted,#6b7280)}
+.similar-card{display:grid;gap:6px;padding:12px 14px;border:1px solid var(--line,#2a385d);border-radius:16px;background:rgba(255,255,255,.035);width:100%}.similar-card strong{font-size:15px}.similar-card span{font-size:12px;color:var(--muted,#97a3c6)}.similar-card button{margin-top:4px;width:max-content}.profile-total{display:block;margin-top:8px;font-size:14px;color:#e9edff}

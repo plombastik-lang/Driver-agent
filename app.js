@@ -48,6 +48,9 @@ drivers = drivers.map(d => ({
   unit: unitFor(d.indicator) || d.unit || '',
   costMode: d.costMode || (Array.isArray(d.costProfile) && d.costProfile.length>1 ? 'monthly' : 'single'),
   costProfile: Array.isArray(d.costProfile) ? d.costProfile : (String(d.cost||'').trim() ? [String(d.cost)] : []),
+  costLogicText: d.costLogicText || '',
+  costFormula: d.costFormula || null,
+  businessRationale: d.businessRationale || '',
   status: d.status === 'Готов' && !String(d.cost || '').trim() && !(Array.isArray(d.costProfile)&&d.costProfile.length) ? 'Черновик' : d.status
 }));
 function normalizeStoredBase(base){
@@ -129,6 +132,34 @@ function exactDuplicate(c) {
 function similarDrivers(c) {
   if (!c.indicator && !c.product) return [];
   return drivers.filter(d => (c.indicator && d.indicator === c.indicator) || (c.product && d.product === c.product)).slice(0,3);
+}
+function moneyNumber(v){ const n=Number(String(v??'').replace(/\s/g,'').replace(',','.')); return Number.isFinite(n)?n:0; }
+function formatMoney(v){ return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(moneyNumber(v)); }
+function profileTotal(profile){ return (profile||[]).reduce((sum,v)=>sum+moneyNumber(v),0); }
+function monthlyFormulaLabel(f){
+  if(!f) return '';
+  if(f.type==='decay_percent') return `M1 = ${formatMoney(f.start)} ₽; далее каждый месяц −${f.percent}% от предыдущего, ${f.months} мес.`;
+  if(f.type==='growth_percent') return `M1 = ${formatMoney(f.start)} ₽; далее каждый месяц +${f.percent}% к предыдущему, ${f.months} мес.`;
+  if(f.type==='decrease_fixed') return `M1 = ${formatMoney(f.start)} ₽; далее каждый месяц −${formatMoney(f.amount)} ₽, ${f.months} мес.`;
+  if(f.type==='increase_fixed') return `M1 = ${formatMoney(f.start)} ₽; далее каждый месяц +${formatMoney(f.amount)} ₽, ${f.months} мес.`;
+  if(f.type==='constant') return `${formatMoney(f.amount)} ₽ ежемесячно, ${f.months} мес.`;
+  if(f.type==='two_stage') return `${formatMoney(f.firstAmount)} ₽ × ${f.firstMonths} мес.; затем ${formatMoney(f.secondAmount)} ₽ × ${f.secondMonths} мес.`;
+  return '';
+}
+function calculateProfile(f){
+  if(!f) return []; const out=[];
+  if(f.type==='decay_percent'||f.type==='growth_percent'){
+    let v=moneyNumber(f.start), k=f.type==='decay_percent'?(1-moneyNumber(f.percent)/100):(1+moneyNumber(f.percent)/100);
+    for(let i=0;i<Math.min(36,Number(f.months)||0);i++){ out.push(String(Math.round(v*100)/100)); v*=k; }
+  } else if(f.type==='decrease_fixed'||f.type==='increase_fixed'){
+    let v=moneyNumber(f.start), delta=moneyNumber(f.amount)*(f.type==='decrease_fixed'?-1:1);
+    for(let i=0;i<Math.min(36,Number(f.months)||0);i++){ out.push(String(Math.max(0,Math.round(v*100)/100))); v+=delta; }
+  } else if(f.type==='constant'){ for(let i=0;i<Math.min(36,Number(f.months)||0);i++) out.push(String(moneyNumber(f.amount)));
+  } else if(f.type==='two_stage'){
+    for(let i=0;i<Math.min(36,Number(f.firstMonths)||0);i++) out.push(String(moneyNumber(f.firstAmount)));
+    for(let i=0;i<Math.min(36-out.length,Number(f.secondMonths)||0);i++) out.push(String(moneyNumber(f.secondAmount)));
+  }
+  return out;
 }
 
 
@@ -258,9 +289,34 @@ async function testLlmConnection(){
   finally{if(btn){btn.disabled=false;btn.textContent='Проверить';}}
 }
 
+
+async function interpretCostLogic(text){
+  const system=`Ты переводишь описание бизнес-логики стоимости финансового драйвера в простую воспроизводимую формулу. Верни ТОЛЬКО JSON без markdown. Разрешённые типы:
+- decay_percent: {type,start,percent,months}
+- growth_percent: {type,start,percent,months}
+- decrease_fixed: {type,start,amount,months}
+- increase_fixed: {type,start,amount,months}
+- constant: {type,amount,months}
+- two_stage: {type,firstAmount,firstMonths,secondAmount,secondMonths}
+Если срок не указан, months=null. Для two_stage сроки каждого этапа обязательны, иначе null. Добавь поле businessLogic — коротко по-русски, что означает формула. Ничего не выдумывай.`;
+  const response=await fetch(LLM_API_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:text}]})});
+  const payload=await response.json().catch(()=>({}));
+  if(!response.ok) throw new Error('formula');
+  const content=payload?.choices?.[0]?.message?.content; if(!content) throw new Error('formula');
+  const data=JSON.parse(cleanJsonText(content));
+  if(!['decay_percent','growth_percent','decrease_fixed','increase_fixed','constant','two_stage'].includes(data.type)) throw new Error('formula');
+  return data;
+}
+function localInterpretCostLogic(text){
+  const t=normalizeText(text); const nums=[...String(text).matchAll(/(\d[\d\s]*(?:[.,]\d+)?)/g)].map(m=>moneyNumber(m[1]));
+  const pct=String(text).match(/(\d+(?:[.,]\d+)?)\s*%/); const months=String(text).match(/(\d+)\s*(?:месяц|месяц[а-я]*|мес\.?)/i);
+  if(nums.length && pct){ const isGrow=/рост|увелич|прибав|раст/i.test(text); return {type:isGrow?'growth_percent':'decay_percent',start:nums[0],percent:moneyNumber(pct[1]),months:months?Number(months[1]):null,businessLogic:String(text).trim()}; }
+  return null;
+}
+
 function startFlow(text) {
   const detected = detect(text);
-  flow = { step:'', candidate:{ ...detected, unit: detected.indicator ? unitFor(detected.indicator) : null, base:'', cost:'', costMode:'', costProfile:[], channel:'', segment:'', status:'Черновик' }, original:text };
+  flow = { step:'', candidate:{ ...detected, unit: detected.indicator ? unitFor(detected.indicator) : null, base:'', cost:'', costMode:'', costProfile:[], costLogicText:'', costFormula:null, businessRationale:'', channel:'', segment:'', status:'Черновик' }, original:text };
   save();
   continueFlow();
 }
@@ -305,13 +361,17 @@ function continueFlow() {
       renderContextActions(); renderProgress(); return;
     }
     const similar = similarDrivers(c);
-    if (similar.length) addMessage('agent', `Проверил реестр. Точного дубля нет, но есть ${similar.length} похожих записей. Продолжаю создание нового драйвера.`);
+    if (similar.length) {
+      flow.similarIds=similar.map(x=>x.id); flow.step='similar'; save();
+      addMessage('agent', `Нашёл ${similar.length} похожих ${similar.length===1?'драйвер':'драйвера'}. Посмотри их перед созданием нового — возможно, нужный уже есть.`);
+      renderContextActions(); renderProgress(); return;
+    }
   }
   if (!c.effectType) return ask('effectType', 'Какой тип эффекта у драйвера?', ['Доходы','Расходы']);
   if (!c.base) return ask('base', 'Выбери базу стоимости драйвера.', ['1','1 000','1 млн','1 млрд']);
   if (!c.costMode) return ask('costMode', 'Как возникает эффект от изменения показателя?', ['Одно значение','По месяцам']);
   if (c.costMode==='single' && !c.cost) return ask('cost', `Укажи эффект в рублях для базы ${baseLabel(c.base)}. Например: «2500».`);
-  if (c.costMode==='monthly' && !(c.costProfile||[]).length) return ask('costProfile', `Укажи эффект по месяцам для базы ${baseLabel(c.base)}. Можно вставить значения из Excel или написать через «;». Например: 8000; 7500; 7000. Максимум 36 месяцев.`);
+  if (c.costMode==='monthly' && !(c.costProfile||[]).length) return ask('costProfile', `Опиши, как меняется эффект по месяцам для базы ${baseLabel(c.base)}. Можно вставить ряд значений или написать правило обычным языком — например: «10 000 в первый месяц, дальше ежемесячное погашение на 7% в течение 12 месяцев». Я рассчитаю профиль и покажу его для подтверждения.`);
   showPreview();
 }
 function ask(step, text, options=[]) {
@@ -329,9 +389,29 @@ function handleFlowAnswer(text) {
   else if (flow.step === 'costMode') c.costMode = normalizeText(text).includes('месяц') ? 'monthly' : 'single';
   else if (flow.step === 'costProfile') {
     const profile=parseCostProfile(text);
-    if(!profile.length){ addMessage('agent','Не смог разобрать значения. Вставь суммы по месяцам, например: 8000; 7500; 7000.'); return; }
-    if(profile.length>36){ addMessage('agent','Можно указать максимум 36 месяцев. Сократи профиль до 36 значений.'); return; }
-    c.costProfile=profile; c.cost=profile[0];
+    const looksLikeSeries=/[;\n\t]/.test(text) || /^\s*[\d\s]+(?:[.,]\d+)?(?:\s*,\s*[\d\s]+(?:[.,]\d+)?)+\s*$/.test(text);
+    if(looksLikeSeries && profile.length){
+      if(profile.length>36){ addMessage('agent','Можно указать максимум 36 месяцев. Сократи профиль до 36 значений.'); return; }
+      c.costProfile=profile; c.cost=String(profileTotal(profile)); c.costLogicText='Профиль стоимости задан пользователем по месяцам.'; c.costFormula=null;
+    } else {
+      flow.pendingCostLogic=text; flow.step='formulaParsing'; save(); addMessage('agent','Понял. Рассчитываю профиль по описанной логике…');
+      (async()=>{
+        let f=null; try{ f=await interpretCostLogic(text); }catch{ f=localInterpretCostLogic(text); }
+        if(!flow) return;
+        if(!f){ flow.step='costProfile'; save(); addMessage('agent','Не смог однозначно воспроизвести формулу. Напиши её чуть конкретнее: начальное значение, правило изменения и срок — либо вставь значения по месяцам.'); renderContextActions(); return; }
+        if(f.type!=='two_stage' && !f.months){ flow.candidate.costFormula=f; flow.candidate.costLogicText=f.businessLogic||text; return ask('formulaMonths','На сколько месяцев рассчитать этот профиль? Например: 12, 24 или 36.'); }
+        const calculated=calculateProfile(f);
+        if(!calculated.length){ flow.step='costProfile'; addMessage('agent','Не получилось рассчитать профиль. Уточни правило и срок.'); renderContextActions(); return; }
+        c.costFormula=f; c.costLogicText=f.businessLogic||text; c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
+        addMessage('agent', `Я понял логику так:\n${monthlyFormulaLabel(f)}\n\nПрофиль: ${calculated.slice(0,12).map((v,i)=>`M${i+1} ${formatMoney(v)} ₽`).join(' · ')}${calculated.length>12?' …':''}\nИтого за ${calculated.length} мес.: ${formatMoney(profileTotal(calculated))} ₽\n\nПодтвердить расчёт?`);
+        renderContextActions(); renderProgress();
+      })(); return;
+    }
+  }
+  else if (flow.step === 'formulaMonths') {
+    const n=Number(String(text).match(/\d+/)?.[0]||0); if(!n||n>36){ addMessage('agent','Укажи срок от 1 до 36 месяцев.'); return; }
+    c.costFormula={...(c.costFormula||{}),months:n}; const calculated=calculateProfile(c.costFormula); c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
+    addMessage('agent', `Рассчитал профиль: ${calculated.slice(0,12).map((v,i)=>`M${i+1} ${formatMoney(v)} ₽`).join(' · ')}${calculated.length>12?' …':''}\nИтого за ${calculated.length} мес.: ${formatMoney(profileTotal(calculated))} ₽\n\nПодтвердить расчёт?`); renderContextActions(); renderProgress(); return;
   }
   else if (flow.step === 'cost') {
     const parsed = parseCost(text);
@@ -365,7 +445,7 @@ function parseCostProfile(text){
 }
 function costSummary(d){
   const p=Array.isArray(d.costProfile)?d.costProfile:[];
-  if(d.costMode==='monthly' || p.length>1) return `${p[0]||d.cost||'—'} ₽ · профиль ${p.length||1} мес.`;
+  if(d.costMode==='monthly' || p.length>1) return `${formatMoney(profileTotal(p))} ₽ · профиль ${p.length||1} мес.`;
   return `${d.cost||'—'} ₽`;
 }
 
@@ -379,7 +459,7 @@ ${c.name}
 Продукт: ${c.product}
 Тип эффекта: ${c.effectType}
 База стоимости: ${baseLabel(c.base)}
-${c.costMode==='monthly' ? `Профиль эффекта: ${(c.costProfile||[]).length} мес.\nM1–M${(c.costProfile||[]).length}: ${(c.costProfile||[]).join('; ')} ₽` : `Эффект: ${c.cost} ₽`}`,'preview');
+${c.costMode==='monthly' ? `Профиль эффекта: ${(c.costProfile||[]).length} мес.\nИтого за профиль: ${formatMoney(profileTotal(c.costProfile||[]))} ₽\n${c.costLogicText?`Логика расчёта: ${c.costLogicText}\n`:''}M1–M${(c.costProfile||[]).length}: ${(c.costProfile||[]).map(formatMoney).join('; ')} ₽` : `Эффект: ${formatMoney(c.cost)} ₽`}`,'preview');
   renderContextActions(); renderProgress();
 }
 function finalizeDriver() {
@@ -387,7 +467,7 @@ function finalizeDriver() {
   let indicator=indicatorRecord(c.indicator);
   if(!indicator){ indicator={name:c.indicator,unit:c.unit,status:'Подготовлен'}; indicatorRegistry.push(indicator); }
   const needsApproval = indicator.status==='Подготовлен';
-  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], channel:c.channel||'', segment:c.segment||'', status:needsApproval?'На согласовании':'Готов' };
+  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', channel:c.channel||'', segment:c.segment||'', status:needsApproval?'На согласовании':'Готов' };
   drivers.unshift(driver); flow=null; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress(); renderContextActions();
   addMessage('agent', needsApproval ? `Готово. «${driver.name}» создан и направлен методологу на согласование. Новый показатель «${indicator.name}» подготовлен и уже виден в реестре показателей.` : `Готово. «${driver.name}» создан со статусом «Готов». Показатель уже есть в справочнике, поэтому дополнительное согласование не требуется.`);
   toast('Драйвер создан');
@@ -408,6 +488,11 @@ function renderContextActions() {
     el.innerHTML=`<button data-flow-action="confirmNewIndicator">Продолжить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='duplicate') {
     el.innerHTML=`<button data-flow-action="useExisting">Открыть существующий</button><button data-flow-action="createAnyway" class="secondary">Создать новый</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='similar') {
+    const sims=(flow.similarIds||[]).map(id=>drivers.find(d=>d.id===id)).filter(Boolean);
+    el.innerHTML=sims.map(d=>`<div class="similar-card"><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(costSummary(d))} за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</span><button data-flow-action="useSimilar" data-driver-id="${d.id}">Использовать</button></div>`).join('')+`<button data-flow-action="continueNew" class="secondary">Ни один не подходит — создать новый</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='formulaConfirm') {
+    el.innerHTML=`<button data-flow-action="confirmFormula">✓ Подтвердить расчёт</button><button data-flow-action="redoFormula" class="secondary">Изменить логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='preview') {
     el.innerHTML=`<button data-flow-action="confirm">✓ Создать</button><button data-flow-action="restart" class="secondary">Изменить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else {
@@ -438,7 +523,7 @@ function renderRegistry() {
         <i class="row-chevron">⌄</i>
       </button>
       <div class="registry-expanded" ${expanded?'':'hidden'}>
-        <div class="meta-grid">${meta('Профиль эффекта',(d.costMode==='monthly'||(d.costProfile||[]).length>1)?`${(d.costProfile||[]).length} мес.`:'Одно значение')}${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${meta('Канал',d.channel||'—')}${meta('Сегмент',d.segment||'—')}</div>
+        <div class="meta-grid">${meta('Профиль эффекта',(d.costMode==='monthly'||(d.costProfile||[]).length>1)?`${(d.costProfile||[]).length} мес. · итого ${formatMoney(profileTotal(d.costProfile||[]))} ₽`:'Одно значение')}${d.costLogicText?meta('Логика расчёта',d.costLogicText):''}${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${meta('Канал',d.channel||'—')}${meta('Сегмент',d.segment||'—')}</div>
         <button class="edit-driver-button" type="button" data-edit-driver="${d.id}">Открыть карточку</button>
       </div>
     </div>`;
@@ -480,6 +565,8 @@ function openDriver(id){
   document.getElementById('editCostMode').value=d.costMode||'single';
   document.getElementById('editCost').value=d.cost||'';
   document.getElementById('editCostProfile').value=(d.costProfile||[]).join('; ');
+  document.getElementById('editCostLogic').value=d.costLogicText||'';
+  document.getElementById('editBusinessRationale').value=d.businessRationale||'';
   syncCostEditor();
   document.getElementById('editStatus').value=d.status;
   document.getElementById('detailHeading').textContent=d.name;
@@ -507,6 +594,10 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   else if(action==='confirmNewIndicator'){ flow.newIndicatorConfirmed=true; flow.step=''; save(); continueFlow(); }
   else if(action==='confirm') finalizeDriver();
   else if(action==='createAnyway'){ flow.duplicateId=null; flow.step=''; save(); continueFlow(); }
+  else if(action==='continueNew'){ flow.similarIds=[]; flow.step=''; save(); continueFlow(); }
+  else if(action==='useSimilar'){ const id=e.target.dataset.driverId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
+  else if(action==='confirmFormula'){ flow.step=''; save(); continueFlow(); }
+  else if(action==='redoFormula'){ flow.candidate.costProfile=[]; flow.candidate.costFormula=null; flow.candidate.costLogicText=''; flow.step=''; save(); continueFlow(); }
   else if(action==='useExisting'){ const id=flow.duplicateId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
   else if(action==='restart'){ const original=flow.original; flow=null; save(); addMessage('agent','Хорошо. Напиши уточнённый запрос заново — текущую карточку я не создал.'); document.getElementById('prompt').value=original; document.getElementById('prompt').focus(); renderContextActions(); renderProgress(); }
 });
@@ -531,17 +622,19 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
   e.preventDefault(); const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
   const costMode=document.getElementById('editCostMode').value;
   const costProfile=costMode==='monthly'?parseCostProfile(document.getElementById('editCostProfile').value):[];
-  const cost=costMode==='monthly'?(costProfile[0]||''):document.getElementById('editCost').value.trim();
+  const cost=costMode==='monthly'?(costProfile.length?String(profileTotal(costProfile)):''):document.getElementById('editCost').value.trim();
   const status=document.getElementById('editStatus').value;
   if(status==='Готов' && !cost){ toast('Сначала укажи стоимость'); document.getElementById('editCost').focus(); return; }
   const selectedUnit=document.getElementById('editUnit').value;
   const unit=selectedUnit==='other' ? document.getElementById('editUnitOther').value.trim() : selectedUnit;
   if(!unit){ toast('Укажи единицу измерения'); return; }
-  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit,channel:document.getElementById('editChannel').value.trim(),segment:document.getElementById('editSegment').value.trim(),base:document.getElementById('editBase').value,cost,costMode,costProfile:costMode==='monthly'?costProfile:[cost],status});
+  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit,channel:document.getElementById('editChannel').value.trim(),segment:document.getElementById('editSegment').value.trim(),base:document.getElementById('editBase').value,cost,costMode,costProfile:costMode==='monthly'?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),status});
   save();renderRegistry();updateSummary();closeDriver();toast('Изменения сохранены');
 });
-function syncCostEditor(){ const monthly=document.getElementById('editCostMode').value==='monthly'; document.getElementById('singleCostWrap').hidden=monthly; document.getElementById('profileCostWrap').hidden=!monthly; }
+function updateProfileTotal(){ const p=parseCostProfile(document.getElementById('editCostProfile').value); const el=document.getElementById('editProfileTotal'); if(el) el.textContent=p.length?`Итого за ${p.length} мес.: ${formatMoney(profileTotal(p))} ₽`:''; }
+function syncCostEditor(){ const monthly=document.getElementById('editCostMode').value==='monthly'; document.getElementById('singleCostWrap').hidden=monthly; document.getElementById('profileCostWrap').hidden=!monthly; document.getElementById('logicWrap').hidden=!monthly; updateProfileTotal(); }
 document.getElementById('editCostMode').addEventListener('change',syncCostEditor);
+document.getElementById('editCostProfile').addEventListener('input',updateProfileTotal);
 document.getElementById('editUnit').addEventListener('change',e=>{
   const other=document.getElementById('editUnitOther');
   other.hidden=e.target.value!=='other';

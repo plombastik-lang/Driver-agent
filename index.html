@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v3.4</span>
+      <span class="version-pill">v3.5</span>
     </header>
 
     <section class="summary-card">
@@ -87,8 +87,12 @@
                 <input id="editUnitOther" class="conditional-field" placeholder="Укажи единицу измерения" hidden />
               </label>
               <label>База стоимости<select id="editBase"><option value="">Не выбрана</option><option value="1">1</option><option value="1000">1 000</option><option value="1000000">1 млн</option><option value="1000000000">1 млрд</option></select></label>
-              <label>Как возникает эффект<select id="editCostMode"><option value="single">Одно значение</option><option value="monthly">По месяцам</option></select></label><label id="singleCostWrap">Эффект, ₽<input id="editCost" inputmode="decimal" /></label><label id="profileCostWrap" class="profile-field" hidden>Эффект по месяцам, ₽<textarea id="editCostProfile" rows="4" placeholder="Например: 8000; 7500; 7000"></textarea><span class="field-hint">До 36 месяцев. Можно вставить ряд из Excel.</span></label>
+              <label>Как возникает эффект<select id="editCostMode"><option value="single">Одно значение</option><option value="monthly">По месяцам</option></select></label><label id="singleCostWrap">Эффект, ₽<input id="editCost" inputmode="decimal" /></label><label id="profileCostWrap" class="profile-field" hidden>Эффект по месяцам, ₽<textarea id="editCostProfile" rows="4" placeholder="Например: 8000; 7500; 7000"></textarea><strong id="editProfileTotal" class="profile-total"></strong><span class="field-hint">До 36 месяцев. Можно вставить ряд из Excel.</span></label><label id="logicWrap" class="profile-field" hidden>Логика расчёта стоимости<textarea id="editCostLogic" rows="3" placeholder="Например: первый месяц 10 000 ₽, далее снижение на 7% ежемесячно"></textarea><span class="field-hint">Сохраняем бизнес-логику, по которой был рассчитан профиль.</span></label>
             </div>
+          </div>
+          <div class="form-section">
+            <h3>Бизнес-смысл</h3>
+            <label>Комментарий / бизнес-обоснование <span class="optional">необязательно</span><textarea id="editBusinessRationale" rows="3" placeholder="Например: доход снижается по мере погашения кредитного портфеля"></textarea></label>
           </div>
           <div class="form-section">
             <h3>Дополнительно</h3>

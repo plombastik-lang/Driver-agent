@@ -51,6 +51,9 @@ drivers = drivers.map(d => ({
   costLogicText: d.costLogicText || '',
   costFormula: d.costFormula || null,
   businessRationale: d.businessRationale || '',
+  calcMethod: d.calcMethod || (d.costMode==='single' ? 'single' : (d.costFormula ? 'rule' : 'manual')),
+  modelId: d.modelId || '',
+  modelParams: d.modelParams || null,
   status: d.status === 'Готов' && !String(d.cost || '').trim() && !(Array.isArray(d.costProfile)&&d.costProfile.length) ? 'Черновик' : d.status
 }));
 function normalizeStoredBase(base){
@@ -136,6 +139,41 @@ function similarDrivers(c) {
 function moneyNumber(v){ const n=Number(String(v??'').replace(/\s/g,'').replace(',','.')); return Number.isFinite(n)?n:0; }
 function formatMoney(v){ return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(moneyNumber(v)); }
 function profileTotal(profile){ return (profile||[]).reduce((sum,v)=>sum+moneyNumber(v),0); }
+
+const DRIVER_MODELS = {
+  credit_income_v1: { id:'credit_income_v1', title:'Доход от кредитной выдачи' }
+};
+function availableModel(c){
+  if(c?.product==='Кредитование' && ['Количество выдач','Объём выдач'].includes(c?.indicator)) return DRIVER_MODELS.credit_income_v1;
+  return null;
+}
+function calculateCreditModel(c){
+  const p=c.modelParams||{};
+  const months=Math.max(1,Math.min(36,Number(p.horizon)||0));
+  if(!months) return [];
+  let balance=c.indicator==='Количество выдач' ? moneyNumber(c.base)*moneyNumber(p.avgCheck) : moneyNumber(c.base);
+  const margin=moneyNumber(p.margin)/100, risk=moneyNumber(p.risk)/100, repayment=moneyNumber(p.repayment)/100;
+  const out=[];
+  for(let i=0;i<months;i++){
+    out.push(String(Math.round(balance*Math.max(0,margin-risk)*100)/100));
+    balance=Math.max(0,balance*(1-repayment));
+  }
+  return out;
+}
+function creditModelLogic(c){
+  const p=c.modelParams||{};
+  const baseText=c.indicator==='Количество выдач' ? `${baseLabel(c.base)} выдач × средний чек ${formatMoney(p.avgCheck)} ₽` : `${baseLabel(c.base)} объёма выдач`;
+  return `Расчёт на остаток кредитной выдачи: ${baseText}; ежемесячный эффект = остаток × (маржа ${p.margin}% − риск ${p.risk}%); остаток ежемесячно уменьшается на ${p.repayment}%; горизонт ${p.horizon} мес.`;
+}
+function creditBusinessRationale(c){
+  return 'Доход формируется на остаток кредитной выдачи, уменьшается по мере погашения и учитывает маржу за вычетом риска.';
+}
+function compactProfileLines(profile, limit=6){
+  const p=profile||[];
+  const lines=p.slice(0,limit).map((v,i)=>`M${i+1}: ${formatMoney(v)} ₽`);
+  if(p.length>limit) lines.push(`… ещё ${p.length-limit} мес.`);
+  return lines.join('\n');
+}
 function monthlyFormulaLabel(f){
   if(!f) return '';
   if(f.type==='decay_percent') return `M1 = ${formatMoney(f.start)} ₽; далее каждый месяц −${f.percent}% от предыдущего, ${f.months} мес.`;
@@ -216,7 +254,7 @@ async function callOpenRouter(userText, candidate={}, expectedStep=''){
 
 Показатели из справочника: ${indicatorNames().join(', ')}. Если смысл точно соответствует одному из них, используй точное название из справочника. Если пользователь явно называет другой показатель, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный показатель похожим. В частности: «доля рынка» = «Доля рынка», «уровень проникновения» = «Уровень проникновения», «объём выдач» = «Объём выдач».
 Продукт должен быть только из справочника: ${PRODUCTS.join(', ')}. Если в сообщении указан другой продукт, верни его как услышал — приложение отдельно проверит справочник и завершит процесс. Не подменяй неизвестный продукт похожим.
-Тип эффекта: Доходы или Расходы. База стоимости: 1, 1000, 1000000 или 1000000000. Единицу измерения НЕ определяй: она является атрибутом показателя и берётся приложением только из справочника показателей.
+Тип эффекта: Доходы или Расходы. База расчёта: 1, 1000, 1000000 или 1000000000. Единицу измерения НЕ определяй: она является атрибутом показателя и берётся приложением только из справочника показателей.
 
 Верни ТОЛЬКО один JSON-объект без markdown и пояснений с ключами: indicator, product, effectType, base, cost, channel, segment. Для неизвестных параметров ставь null. Если пользователь отвечает коротко на уточняющий вопрос, учитывай поле, которое сейчас ожидается. Стоимость верни числом/строкой в рублях без знака валюты.`;
   const current=JSON.stringify(candidate||{});
@@ -255,7 +293,7 @@ async function processUserText(text){
     const expectedStep=flow?.step||'';
     const data=await callOpenRouter(text,flow?.candidate||{},expectedStep);
     if(!flow){
-      flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',costMode:'',costProfile:[],channel:'',segment:'',status:'Черновик'},original:text};
+      flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',costMode:'',calcMethod:'',costProfile:[],costLogicText:'',costFormula:null,businessRationale:'',modelId:'',modelParams:null,channel:'',segment:'',status:'Черновик'},original:text};
     }
     mergeLlmCandidate(data);
     if(expectedStep && !data[expectedStep]){
@@ -298,7 +336,7 @@ async function interpretCostLogic(text){
 - increase_fixed: {type,start,amount,months}
 - constant: {type,amount,months}
 - two_stage: {type,firstAmount,firstMonths,secondAmount,secondMonths}
-Если срок не указан, months=null. Для two_stage сроки каждого этапа обязательны, иначе null. Добавь поле businessLogic — коротко по-русски, что означает формула. Ничего не выдумывай.`;
+Если срок не указан, months=null. Для two_stage сроки каждого этапа обязательны, иначе null. Добавь поля businessLogic — коротко по-русски, что означает формула, и businessRationale — короткий бизнес-смысл эффекта. Ничего не выдумывай.`;
   const response=await fetch(LLM_API_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:text}]})});
   const payload=await response.json().catch(()=>({}));
   if(!response.ok) throw new Error('formula');
@@ -316,7 +354,7 @@ function localInterpretCostLogic(text){
 
 function startFlow(text) {
   const detected = detect(text);
-  flow = { step:'', candidate:{ ...detected, unit: detected.indicator ? unitFor(detected.indicator) : null, base:'', cost:'', costMode:'', costProfile:[], costLogicText:'', costFormula:null, businessRationale:'', channel:'', segment:'', status:'Черновик' }, original:text };
+  flow = { step:'', candidate:{ ...detected, unit: detected.indicator ? unitFor(detected.indicator) : null, base:'', cost:'', costMode:'', calcMethod:'', costProfile:[], costLogicText:'', costFormula:null, businessRationale:'', modelId:'', modelParams:null, channel:'', segment:'', status:'Черновик' }, original:text };
   save();
   continueFlow();
 }
@@ -368,10 +406,49 @@ function continueFlow() {
     }
   }
   if (!c.effectType) return ask('effectType', 'Какой тип эффекта у драйвера?', ['Доходы','Расходы']);
-  if (!c.base) return ask('base', 'Выбери базу стоимости драйвера.', ['1','1 000','1 млн','1 млрд']);
-  if (!c.costMode) return ask('costMode', 'Как возникает эффект от изменения показателя?', ['Одно значение','По месяцам']);
-  if (c.costMode==='single' && !c.cost) return ask('cost', `Укажи эффект в рублях для базы ${baseLabel(c.base)}. Например: «2500».`);
-  if (c.costMode==='monthly' && !(c.costProfile||[]).length) return ask('costProfile', `Опиши, как меняется эффект по месяцам для базы ${baseLabel(c.base)}. Можно вставить ряд значений или написать правило обычным языком — например: «10 000 в первый месяц, дальше ежемесячное погашение на 7% в течение 12 месяцев». Я рассчитаю профиль и покажу его для подтверждения.`);
+
+  const model=availableModel(c);
+  if(!c.calcMethod && model){
+    flow.step='modelChoice'; flow.modelId=model.id; save();
+    addMessage('agent', `Для «${c.indicator} — ${c.product}» есть готовая модель «${model.title}». Она считает помесячный эффект по марже, риску и погашению${c.indicator==='Количество выдач'?', а объём сначала рассчитывает через средний чек':''}. Использовать её?`);
+    renderContextActions(); renderProgress(); return;
+  }
+  if (!c.base) return ask('base', 'Выбери базу, для которой рассчитываем эффект.', ['1','1 000','1 млн','1 млрд']);
+
+  if(c.calcMethod==='model'){
+    c.costMode='monthly'; c.modelId=c.modelId||flow.modelId||model?.id||'credit_income_v1'; c.modelParams=c.modelParams||{};
+    const p=c.modelParams;
+    if(c.indicator==='Количество выдач' && !p.avgCheck) return ask('modelAvgCheck','Укажи средний чек одной выдачи в рублях. Например: «1 200 000».');
+    if(p.margin===undefined || p.margin==='') return ask('modelMargin','Укажи маржу в процентах за месяц.');
+    if(p.risk===undefined || p.risk==='') return ask('modelRisk','Укажи уровень риска в процентах за месяц.');
+    if(p.repayment===undefined || p.repayment==='') return ask('modelRepayment','Укажи уровень погашения в процентах за месяц.');
+    if(!p.horizon) return ask('modelHorizon','На какой горизонт рассчитать эффект? От 1 до 36 месяцев.',['12','24','36']);
+    if(!(c.costProfile||[]).length){
+      const profile=calculateCreditModel(c);
+      c.costProfile=profile; c.cost=String(profileTotal(profile)); c.costLogicText=creditModelLogic(c); c.businessRationale=creditBusinessRationale(c);
+      flow.step='modelConfirm'; save();
+      addMessage('agent', `Рассчитал по готовой модели:
+${c.costLogicText}
+
+${compactProfileLines(profile)}
+
+Итого за ${profile.length} мес.: ${formatMoney(profileTotal(profile))} ₽
+
+Подтвердить расчёт?`);
+      renderContextActions(); renderProgress(); return;
+    }
+    return showPreview();
+  }
+
+  if(!c.calcMethod) return ask('calcMethod','Как удобнее задать стоимость?',['Одно значение','Описать правило','Ввести по месяцам']);
+  if(c.calcMethod==='single'){
+    c.costMode='single';
+    if(!c.cost) return ask('cost', `Укажи эффект в рублях для базы ${baseLabel(c.base)}. Например: «2500».`);
+    return showPreview();
+  }
+  c.costMode='monthly';
+  if(c.calcMethod==='rule' && !(c.costProfile||[]).length) return ask('costRule', `Опиши бизнес-логику обычным языком. Например: «10 000 ₽ в первый месяц, затем эффект уменьшается на 7% ежемесячно в течение 12 месяцев». Я сначала покажу, как понял правило, а затем рассчитаю профиль.`);
+  if(c.calcMethod==='manual' && !(c.costProfile||[]).length) return ask('costProfile', `Вставь значения по месяцам из Excel или перечисли их. После создания каждое значение можно будет отдельно поправить в карточке.`);
   showPreview();
 }
 function ask(step, text, options=[]) {
@@ -386,39 +463,61 @@ function handleFlowAnswer(text) {
   else if (flow.step === 'product') c.product = text.trim();
   else if (flow.step === 'effectType') c.effectType = normalizeEffect(text);
   else if (flow.step === 'base') c.base = normalizeBaseAnswer(text);
-  else if (flow.step === 'costMode') c.costMode = normalizeText(text).includes('месяц') ? 'monthly' : 'single';
+  else if (flow.step === 'modelChoice') { c.calcMethod = normalizeText(text).includes('модел') || normalizeText(text).includes('использ') ? 'model' : ''; if(!c.calcMethod) c.calcMethod='rule'; c.modelId=flow.modelId||''; }
+  else if (flow.step === 'calcMethod') {
+    const t=normalizeText(text); c.calcMethod=t.includes('одно')?'single':t.includes('правил')?'rule':'manual'; c.costMode=c.calcMethod==='single'?'single':'monthly';
+  }
+  else if(flow.step==='modelAvgCheck'){ const x=parseCost(text); if(!x){addMessage('agent','Не смог разобрать средний чек. Укажи сумму в рублях.');return;} c.modelParams={...(c.modelParams||{}),avgCheck:x.cost}; }
+  else if(flow.step==='modelMargin' || flow.step==='modelRisk' || flow.step==='modelRepayment'){
+    const n=String(text).replace(',','.').match(/\d+(?:\.\d+)?/); if(!n){addMessage('agent','Укажи значение в процентах, например 2 или 0,7.');return;}
+    const key=flow.step==='modelMargin'?'margin':flow.step==='modelRisk'?'risk':'repayment'; c.modelParams={...(c.modelParams||{}),[key]:n[0]};
+  }
+  else if(flow.step==='modelHorizon'){
+    const n=Number(String(text).match(/\d+/)?.[0]||0); if(!n||n>36){addMessage('agent','Укажи срок от 1 до 36 месяцев.');return;} c.modelParams={...(c.modelParams||{}),horizon:n};
+  }
+  else if (flow.step === 'costRule') {
+    flow.pendingCostLogic=text; flow.step='formulaParsing'; save(); addMessage('agent','Понял. Сначала формализую правило, потом покажу расчёт…');
+    (async()=>{
+      let f=null; try{ f=await interpretCostLogic(text); }catch{ f=localInterpretCostLogic(text); }
+      if(!flow) return;
+      if(!f){ flow.step='costRule'; save(); addMessage('agent','Не смог однозначно понять правило. Укажи начальное значение, как оно меняется и срок расчёта.'); renderContextActions(); return; }
+      c.costFormula=f; c.costLogicText=f.businessLogic||text; c.businessRationale=f.businessRationale||c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
+      if(f.type!=='two_stage' && !f.months){ return ask('formulaMonths','На сколько месяцев применить это правило? Например: 12, 24 или 36.'); }
+      const calculated=calculateProfile(f);
+      if(!calculated.length){ flow.step='costRule'; addMessage('agent','Не получилось рассчитать профиль. Уточни правило и срок.'); renderContextActions(); return; }
+      c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
+      addMessage('agent', `Я понял правило так:
+${monthlyFormulaLabel(f)}
+
+Бизнес-смысл: ${c.businessRationale}
+
+${compactProfileLines(calculated)}
+
+Итого за ${calculated.length} мес.: ${formatMoney(profileTotal(calculated))} ₽
+
+Подтвердить расчёт?`);
+      renderContextActions(); renderProgress();
+    })(); return;
+  }
   else if (flow.step === 'costProfile') {
     const profile=parseCostProfile(text);
-    const looksLikeSeries=/[;\n\t]/.test(text) || /^\s*[\d\s]+(?:[.,]\d+)?(?:\s*,\s*[\d\s]+(?:[.,]\d+)?)+\s*$/.test(text);
-    if(looksLikeSeries && profile.length){
-      if(profile.length>36){ addMessage('agent','Можно указать максимум 36 месяцев. Сократи профиль до 36 значений.'); return; }
-      c.costProfile=profile; c.cost=String(profileTotal(profile)); c.costLogicText='Профиль стоимости задан пользователем по месяцам.'; c.costFormula=null;
-    } else {
-      flow.pendingCostLogic=text; flow.step='formulaParsing'; save(); addMessage('agent','Понял. Рассчитываю профиль по описанной логике…');
-      (async()=>{
-        let f=null; try{ f=await interpretCostLogic(text); }catch{ f=localInterpretCostLogic(text); }
-        if(!flow) return;
-        if(!f){ flow.step='costProfile'; save(); addMessage('agent','Не смог однозначно воспроизвести формулу. Напиши её чуть конкретнее: начальное значение, правило изменения и срок — либо вставь значения по месяцам.'); renderContextActions(); return; }
-        if(f.type!=='two_stage' && !f.months){ flow.candidate.costFormula=f; flow.candidate.costLogicText=f.businessLogic||text; return ask('formulaMonths','На сколько месяцев рассчитать этот профиль? Например: 12, 24 или 36.'); }
-        const calculated=calculateProfile(f);
-        if(!calculated.length){ flow.step='costProfile'; addMessage('agent','Не получилось рассчитать профиль. Уточни правило и срок.'); renderContextActions(); return; }
-        c.costFormula=f; c.costLogicText=f.businessLogic||text; c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
-        addMessage('agent', `Я понял логику так:\n${monthlyFormulaLabel(f)}\n\nПрофиль: ${calculated.slice(0,12).map((v,i)=>`M${i+1} ${formatMoney(v)} ₽`).join(' · ')}${calculated.length>12?' …':''}\nИтого за ${calculated.length} мес.: ${formatMoney(profileTotal(calculated))} ₽\n\nПодтвердить расчёт?`);
-        renderContextActions(); renderProgress();
-      })(); return;
-    }
+    if(!profile.length){addMessage('agent','Не смог разобрать значения. Вставь числа из Excel или перечисли их через точку с запятой.');return;}
+    if(profile.length>36){addMessage('agent','Можно указать максимум 36 месяцев.');return;}
+    c.costProfile=profile; c.cost=String(profileTotal(profile)); c.costLogicText='Профиль введён пользователем вручную.'; c.businessRationale=c.businessRationale||'Помесячный эффект задан пользователем вручную.'; c.costFormula=null;
   }
   else if (flow.step === 'formulaMonths') {
     const n=Number(String(text).match(/\d+/)?.[0]||0); if(!n||n>36){ addMessage('agent','Укажи срок от 1 до 36 месяцев.'); return; }
     c.costFormula={...(c.costFormula||{}),months:n}; const calculated=calculateProfile(c.costFormula); c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
-    addMessage('agent', `Рассчитал профиль: ${calculated.slice(0,12).map((v,i)=>`M${i+1} ${formatMoney(v)} ₽`).join(' · ')}${calculated.length>12?' …':''}\nИтого за ${calculated.length} мес.: ${formatMoney(profileTotal(calculated))} ₽\n\nПодтвердить расчёт?`); renderContextActions(); renderProgress(); return;
+    addMessage('agent', `Рассчитал профиль по правилу:
+${compactProfileLines(calculated)}
+
+Итого за ${calculated.length} мес.: ${formatMoney(profileTotal(calculated))} ₽
+
+Подтвердить расчёт?`); renderContextActions(); renderProgress(); return;
   }
   else if (flow.step === 'cost') {
     const parsed = parseCost(text);
-    if (!parsed) {
-      addMessage('agent','Не смог разобрать стоимость. Укажи сумму в рублях, например «2500».');
-      return;
-    }
+    if (!parsed) { addMessage('agent','Не смог разобрать стоимость. Укажи сумму в рублях, например «2500».'); return; }
     c.cost = parsed.cost;
   }
   flow.step = ''; flow.options = []; save(); continueFlow();
@@ -452,14 +551,19 @@ function costSummary(d){
 function showPreview() {
   const c=flow.candidate; c.name = `${c.indicator} — ${c.product}`;
   flow.step='preview'; save();
+  const methodLabel=c.calcMethod==='model'?'По готовой модели':c.calcMethod==='rule'?'По заданному правилу':c.calcMethod==='manual'?'Вручную по месяцам':'Одно значение';
   addMessage('agent', `Проверь карточку перед созданием:
 
 ${c.name}
 Показатель: ${c.indicator}
 Продукт: ${c.product}
 Тип эффекта: ${c.effectType}
-База стоимости: ${baseLabel(c.base)}
-${c.costMode==='monthly' ? `Профиль эффекта: ${(c.costProfile||[]).length} мес.\nИтого за профиль: ${formatMoney(profileTotal(c.costProfile||[]))} ₽\n${c.costLogicText?`Логика расчёта: ${c.costLogicText}\n`:''}M1–M${(c.costProfile||[]).length}: ${(c.costProfile||[]).map(formatMoney).join('; ')} ₽` : `Эффект: ${formatMoney(c.cost)} ₽`}`,'preview');
+База расчёта: ${baseLabel(c.base)}
+Способ расчёта: ${methodLabel}
+${c.costMode==='monthly' ? `Профиль эффекта: ${(c.costProfile||[]).length} мес.
+Итого за профиль: ${formatMoney(profileTotal(c.costProfile||[]))} ₽
+${c.costLogicText?`Логика расчёта: ${c.costLogicText}
+`:''}${c.businessRationale?`Бизнес-смысл: ${c.businessRationale}`:''}` : `Эффект: ${formatMoney(c.cost)} ₽`}`,'preview');
   renderContextActions(); renderProgress();
 }
 function finalizeDriver() {
@@ -467,7 +571,7 @@ function finalizeDriver() {
   let indicator=indicatorRecord(c.indicator);
   if(!indicator){ indicator={name:c.indicator,unit:c.unit,status:'Подготовлен'}; indicatorRegistry.push(indicator); }
   const needsApproval = indicator.status==='Подготовлен';
-  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', channel:c.channel||'', segment:c.segment||'', status:needsApproval?'На согласовании':'Готов' };
+  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', calcMethod:c.calcMethod||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', modelId:c.modelId||'', modelParams:c.modelParams||null, channel:c.channel||'', segment:c.segment||'', status:needsApproval?'На согласовании':'Готов' };
   drivers.unshift(driver); flow=null; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress(); renderContextActions();
   addMessage('agent', needsApproval ? `Готово. «${driver.name}» создан и направлен методологу на согласование. Новый показатель «${indicator.name}» подготовлен и уже виден в реестре показателей.` : `Готово. «${driver.name}» создан со статусом «Готов». Показатель уже есть в справочнике, поэтому дополнительное согласование не требуется.`);
   toast('Драйвер создан');
@@ -491,6 +595,10 @@ function renderContextActions() {
   } else if (flow.step==='similar') {
     const sims=(flow.similarIds||[]).map(id=>drivers.find(d=>d.id===id)).filter(Boolean);
     el.innerHTML=sims.map(d=>`<div class="similar-card"><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(costSummary(d))} за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</span><button data-flow-action="useSimilar" data-driver-id="${d.id}">Использовать</button></div>`).join('')+`<button data-flow-action="continueNew" class="secondary">Ни один не подходит — создать новый</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='modelChoice') {
+    el.innerHTML=`<button data-flow-value="Использовать модель">Использовать модель</button><button data-flow-value="Задать свою логику" class="secondary">Задать свою логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='modelConfirm') {
+    el.innerHTML=`<button data-flow-action="confirmModel">✓ Подтвердить модель</button><button data-flow-action="redoModel" class="secondary">Изменить параметры</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='formulaConfirm') {
     el.innerHTML=`<button data-flow-action="confirmFormula">✓ Подтвердить расчёт</button><button data-flow-action="redoFormula" class="secondary">Изменить логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='preview') {
@@ -523,7 +631,7 @@ function renderRegistry() {
         <i class="row-chevron">⌄</i>
       </button>
       <div class="registry-expanded" ${expanded?'':'hidden'}>
-        <div class="meta-grid">${meta('Профиль эффекта',(d.costMode==='monthly'||(d.costProfile||[]).length>1)?`${(d.costProfile||[]).length} мес. · итого ${formatMoney(profileTotal(d.costProfile||[]))} ₽`:'Одно значение')}${d.costLogicText?meta('Логика расчёта',d.costLogicText):''}${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${meta('Канал',d.channel||'—')}${meta('Сегмент',d.segment||'—')}</div>
+        <div class="meta-grid">${meta('Способ расчёта',d.calcMethod==='model'?'По готовой модели':d.calcMethod==='rule'?'По заданному правилу':d.calcMethod==='manual'?'Вручную по месяцам':'Одно значение')}${meta('Профиль эффекта',(d.costMode==='monthly'||(d.costProfile||[]).length>1)?`${(d.costProfile||[]).length} мес. · итого ${formatMoney(profileTotal(d.costProfile||[]))} ₽`:'Одно значение')}${d.costLogicText?meta('Логика расчёта',d.costLogicText):''}${d.businessRationale?meta('Бизнес-смысл',d.businessRationale):''}${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${meta('Канал',d.channel||'—')}${meta('Сегмент',d.segment||'—')}</div>
         <button class="edit-driver-button" type="button" data-edit-driver="${d.id}">Открыть карточку</button>
       </div>
     </div>`;
@@ -546,6 +654,18 @@ function switchTab(name){
   document.querySelectorAll('.tab').forEach(x=>x.classList.toggle('active',x.dataset.tab===name));
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active',x.id===name));
 }
+function getProfileFromEditor(){
+  return [...document.querySelectorAll('#editProfileGrid input[data-profile-month]')].map(x=>x.value.trim()).filter(v=>v!=='' && Number.isFinite(moneyNumber(v))).slice(0,36);
+}
+function renderProfileEditor(profile=[]){
+  const grid=document.getElementById('editProfileGrid'); if(!grid) return;
+  const values=(profile||[]).length ? profile : [''];
+  grid.innerHTML=values.map((v,i)=>`<label class="profile-row"><span>M${i+1}</span><input data-profile-month="${i}" inputmode="decimal" value="${escapeHtml(v)}" /></label>`).join('');
+  grid.classList.add('collapsed');
+  document.getElementById('toggleProfileRows').textContent=values.length>12?'Показать все':'Все месяцы показаны';
+  document.getElementById('toggleProfileRows').hidden=values.length<=12;
+  updateProfileTotal();
+}
 function openDriver(id){
   const d=drivers.find(x=>x.id===id); if(!d)return;
   document.getElementById('editId').value=d.id;
@@ -562,11 +682,17 @@ function openDriver(id){
   document.getElementById('editChannel').value=d.channel||'';
   document.getElementById('editSegment').value=d.segment||'';
   document.getElementById('editBase').value=d.base||'';
-  document.getElementById('editCostMode').value=d.costMode||'single';
-  document.getElementById('editCost').value=d.cost||'';
-  document.getElementById('editCostProfile').value=(d.costProfile||[]).join('; ');
+  document.getElementById('editCalcMethod').value=d.calcMethod || (d.costMode==='single'?'single':d.costFormula?'rule':'manual');
+  document.getElementById('editCost').value=d.costMode==='single'?(d.cost||''):'';
   document.getElementById('editCostLogic').value=d.costLogicText||'';
   document.getElementById('editBusinessRationale').value=d.businessRationale||'';
+  const mp=d.modelParams||{};
+  document.getElementById('editAvgCheck').value=mp.avgCheck||'';
+  document.getElementById('editMargin').value=mp.margin||'';
+  document.getElementById('editRisk').value=mp.risk||'';
+  document.getElementById('editRepayment').value=mp.repayment||'';
+  document.getElementById('editHorizon').value=mp.horizon||((d.costProfile||[]).length||'');
+  renderProfileEditor(d.costMode==='monthly'?(d.costProfile||[]):[]);
   syncCostEditor();
   document.getElementById('editStatus').value=d.status;
   document.getElementById('detailHeading').textContent=d.name;
@@ -597,6 +723,8 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   else if(action==='continueNew'){ flow.similarIds=[]; flow.step=''; save(); continueFlow(); }
   else if(action==='useSimilar'){ const id=e.target.dataset.driverId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
   else if(action==='confirmFormula'){ flow.step=''; save(); continueFlow(); }
+  else if(action==='confirmModel'){ flow.step=''; save(); continueFlow(); }
+  else if(action==='redoModel'){ flow.candidate.costProfile=[]; flow.candidate.cost=''; flow.candidate.modelParams={}; flow.step=''; save(); continueFlow(); }
   else if(action==='redoFormula'){ flow.candidate.costProfile=[]; flow.candidate.costFormula=null; flow.candidate.costLogicText=''; flow.step=''; save(); continueFlow(); }
   else if(action==='useExisting'){ const id=flow.duplicateId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
   else if(action==='restart'){ const original=flow.original; flow=null; save(); addMessage('agent','Хорошо. Напиши уточнённый запрос заново — текущую карточку я не создал.'); document.getElementById('prompt').value=original; document.getElementById('prompt').focus(); renderContextActions(); renderProgress(); }
@@ -620,21 +748,43 @@ document.getElementById('approveDriver').addEventListener('click',()=>{
 });
 document.getElementById('driverForm').addEventListener('submit',e=>{
   e.preventDefault(); const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
-  const costMode=document.getElementById('editCostMode').value;
-  const costProfile=costMode==='monthly'?parseCostProfile(document.getElementById('editCostProfile').value):[];
-  const cost=costMode==='monthly'?(costProfile.length?String(profileTotal(costProfile)):''):document.getElementById('editCost').value.trim();
+  const calcMethod=document.getElementById('editCalcMethod').value;
+  const monthly=calcMethod!=='single';
+  const costProfile=monthly?getProfileFromEditor():[];
+  const cost=monthly?(costProfile.length?String(profileTotal(costProfile)):''):document.getElementById('editCost').value.trim();
   const status=document.getElementById('editStatus').value;
-  if(status==='Готов' && !cost){ toast('Сначала укажи стоимость'); document.getElementById('editCost').focus(); return; }
+  if(status==='Готов' && !cost){ toast('Сначала укажи стоимость'); return; }
   const selectedUnit=document.getElementById('editUnit').value;
   const unit=selectedUnit==='other' ? document.getElementById('editUnitOther').value.trim() : selectedUnit;
   if(!unit){ toast('Укажи единицу измерения'); return; }
-  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit,channel:document.getElementById('editChannel').value.trim(),segment:document.getElementById('editSegment').value.trim(),base:document.getElementById('editBase').value,cost,costMode,costProfile:costMode==='monthly'?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),status});
+  const modelParams=calcMethod==='model'?{avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),horizon:Number(document.getElementById('editHorizon').value||costProfile.length||0)}:null;
+  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit,channel:document.getElementById('editChannel').value.trim(),segment:document.getElementById('editSegment').value.trim(),base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?'credit_income_v1':'',modelParams,status});
   save();renderRegistry();updateSummary();closeDriver();toast('Изменения сохранены');
 });
-function updateProfileTotal(){ const p=parseCostProfile(document.getElementById('editCostProfile').value); const el=document.getElementById('editProfileTotal'); if(el) el.textContent=p.length?`Итого за ${p.length} мес.: ${formatMoney(profileTotal(p))} ₽`:''; }
-function syncCostEditor(){ const monthly=document.getElementById('editCostMode').value==='monthly'; document.getElementById('singleCostWrap').hidden=monthly; document.getElementById('profileCostWrap').hidden=!monthly; document.getElementById('logicWrap').hidden=!monthly; updateProfileTotal(); }
-document.getElementById('editCostMode').addEventListener('change',syncCostEditor);
-document.getElementById('editCostProfile').addEventListener('input',updateProfileTotal);
+function updateProfileTotal(){ const p=getProfileFromEditor(); const el=document.getElementById('editProfileTotal'); if(el) el.textContent=p.length?`Итого за ${p.length} мес.: ${formatMoney(profileTotal(p))} ₽`:''; }
+function syncCostEditor(){
+  const method=document.getElementById('editCalcMethod').value;
+  const monthly=method!=='single';
+  document.getElementById('singleCostWrap').hidden=monthly;
+  document.getElementById('profileCostWrap').hidden=!monthly;
+  document.getElementById('logicWrap').hidden=method==='single';
+  document.getElementById('modelParamsWrap').hidden=method!=='model';
+  document.getElementById('avgCheckWrap').hidden=document.getElementById('editIndicator').value.trim()!=='Количество выдач';
+  updateProfileTotal();
+}
+document.getElementById('editCalcMethod').addEventListener('change',syncCostEditor);
+document.getElementById('editProfileGrid').addEventListener('input',updateProfileTotal);
+document.getElementById('addProfileMonth').addEventListener('click',()=>{
+  const p=getProfileFromEditor(); if(p.length>=36){toast('Максимум 36 месяцев');return;} p.push(''); renderProfileEditor(p);
+});
+document.getElementById('toggleProfileRows').addEventListener('click',()=>{
+  const grid=document.getElementById('editProfileGrid'); grid.classList.toggle('collapsed'); document.getElementById('toggleProfileRows').textContent=grid.classList.contains('collapsed')?'Показать все':'Свернуть';
+});
+document.getElementById('recalcModel').addEventListener('click',()=>{
+  const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
+  const temp={indicator:document.getElementById('editIndicator').value.trim(),base:document.getElementById('editBase').value,modelParams:{avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),horizon:Number(document.getElementById('editHorizon').value||0)}};
+  const p=calculateCreditModel(temp); if(!p.length){toast('Заполни параметры модели');return;} renderProfileEditor(p); document.getElementById('editCostLogic').value=creditModelLogic(temp); document.getElementById('editBusinessRationale').value=creditBusinessRationale(temp); toast('Профиль пересчитан');
+});
 document.getElementById('editUnit').addEventListener('change',e=>{
   const other=document.getElementById('editUnitOther');
   other.hidden=e.target.value!=='other';

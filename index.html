@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=3.4" />
+  <link rel="stylesheet" href="styles.css?v=3.6" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v3.5</span>
+      <span class="version-pill">v3.6</span>
     </header>
 
     <section class="summary-card">
@@ -86,13 +86,33 @@
                 </select>
                 <input id="editUnitOther" class="conditional-field" placeholder="Укажи единицу измерения" hidden />
               </label>
-              <label>База стоимости<select id="editBase"><option value="">Не выбрана</option><option value="1">1</option><option value="1000">1 000</option><option value="1000000">1 млн</option><option value="1000000000">1 млрд</option></select></label>
-              <label>Как возникает эффект<select id="editCostMode"><option value="single">Одно значение</option><option value="monthly">По месяцам</option></select></label><label id="singleCostWrap">Эффект, ₽<input id="editCost" inputmode="decimal" /></label><label id="profileCostWrap" class="profile-field" hidden>Эффект по месяцам, ₽<textarea id="editCostProfile" rows="4" placeholder="Например: 8000; 7500; 7000"></textarea><strong id="editProfileTotal" class="profile-total"></strong><span class="field-hint">До 36 месяцев. Можно вставить ряд из Excel.</span></label><label id="logicWrap" class="profile-field" hidden>Логика расчёта стоимости<textarea id="editCostLogic" rows="3" placeholder="Например: первый месяц 10 000 ₽, далее снижение на 7% ежемесячно"></textarea><span class="field-hint">Сохраняем бизнес-логику, по которой был рассчитан профиль.</span></label>
+              <label>База расчёта<select id="editBase"><option value="">Не выбрана</option><option value="1">1</option><option value="1000">1 000</option><option value="1000000">1 млн</option><option value="1000000000">1 млрд</option></select></label>
+              <label>Способ расчёта<select id="editCalcMethod"><option value="single">Одно значение</option><option value="model">По готовой модели</option><option value="rule">По заданному правилу</option><option value="manual">Вручную по месяцам</option></select></label>
+              <label id="singleCostWrap">Эффект, ₽<input id="editCost" inputmode="decimal" /></label>
+              <div id="modelParamsWrap" class="profile-field model-params" hidden>
+                <div class="field-title">Параметры модели</div>
+                <div class="form-grid">
+                  <label id="avgCheckWrap">Средний чек, ₽<input id="editAvgCheck" inputmode="decimal" /></label>
+                  <label>Маржа, % в месяц<input id="editMargin" inputmode="decimal" /></label>
+                  <label>Уровень риска, % в месяц<input id="editRisk" inputmode="decimal" /></label>
+                  <label>Погашение, % в месяц<input id="editRepayment" inputmode="decimal" /></label>
+                  <label>Горизонт, мес.<input id="editHorizon" inputmode="numeric" min="1" max="36" /></label>
+                </div>
+                <button id="recalcModel" type="button" class="secondary-button inline-button">Пересчитать профиль</button>
+              </div>
+              <div id="profileCostWrap" class="profile-field" hidden>
+                <div class="field-title">Эффект по месяцам, ₽</div>
+                <div id="editProfileGrid" class="profile-grid collapsed"></div>
+                <div class="profile-controls"><button id="toggleProfileRows" type="button" class="secondary-button inline-button">Показать все</button><button id="addProfileMonth" type="button" class="secondary-button inline-button">+ месяц</button></div>
+                <strong id="editProfileTotal" class="profile-total"></strong>
+                <span class="field-hint">Каждый месяц можно поправить отдельно. До 36 месяцев.</span>
+              </div>
+              <label id="logicWrap" class="profile-field" hidden>Логика расчёта стоимости<textarea id="editCostLogic" rows="3" placeholder="Например: первый месяц 10 000 ₽, далее снижение на 7% ежемесячно"></textarea><span class="field-hint">Сохраняем правило, по которому рассчитан профиль.</span></label>
             </div>
           </div>
           <div class="form-section">
             <h3>Бизнес-смысл</h3>
-            <label>Комментарий / бизнес-обоснование <span class="optional">необязательно</span><textarea id="editBusinessRationale" rows="3" placeholder="Например: доход снижается по мере погашения кредитного портфеля"></textarea></label>
+            <label>Описание логики / бизнес-смысл<textarea id="editBusinessRationale" rows="3" placeholder="Например: доход снижается по мере погашения кредитного портфеля"></textarea></label>
           </div>
           <div class="form-section">
             <h3>Дополнительно</h3>
@@ -139,6 +159,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=3.4"></script>
+  <script src="app.js?v=3.6"></script>
 </body>
 </html>

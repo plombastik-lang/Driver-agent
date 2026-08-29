@@ -1,5 +1,5 @@
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
-const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.5';
+const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.6';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
@@ -596,7 +596,7 @@ function modelLogic(c){
   return `Расчёт на остаток кредитной выдачи: ${baseText}; В 1-м месяце используется 50% выдачи. Чистый процентный доход = остаток × маржа ${p.margin}% годовых × дни месяца / дни года. Расходы на резервы = −остаток × риск ${p.risk}% годовых × дни месяца / дни года. Остаток ежемесячно уменьшается на ${p.repayment}%; горизонт ${creditHorizonMonths(p)} мес.`;
 }
 function modelBusinessRationale(c){ const m=availableModel(c); return m?.businessLogic||''; }
-// v5.5: модельный драйвер всегда хранит рассчитанную стоимость.
+// v5.6: модельный драйвер всегда хранит рассчитанную стоимость.
 // Это не только демо-инициализация: при каждом старте восстанавливаем профиль из модели,
 // если он пустой/нулевой или расходится с текущими параметрами модели.
 function repairModelDriverCost(d){
@@ -627,7 +627,7 @@ for (const d of drivers) {
   d.name=buildDriverName(d)||d.name;
 }
 localStorage.setItem(REGISTRY_KEY, JSON.stringify(drivers));
-localStorage.setItem(MODEL_COST_REPAIR_KEY, JSON.stringify({version:'5.5',at:new Date().toISOString(),count:modelCostsRepaired}));
+localStorage.setItem(MODEL_COST_REPAIR_KEY, JSON.stringify({version:'5.6',at:new Date().toISOString(),count:modelCostsRepaired}));
 function compactProfileLines(profile, limit=6){
   const p=profile||[];
   const lines=p.slice(0,limit).map((v,i)=>`Месяц ${i+1}: ${formatMoney(v)} ₽`);
@@ -830,6 +830,13 @@ function checkIndicator(indicator) {
   if(rec){ flow.candidate.indicator=rec.name; flow.candidate.unit=rec.unit; flow.candidate.newIndicator=false; return 'found'; }
   flow.candidate.indicator=value; flow.candidate.newIndicator=true; return 'new';
 }
+function inferUnitForNewIndicator(name){
+  const t=normalizeText(name||'');
+  if(/доля|уровень|проникнов|конверс|процент|ставк/.test(t)) return '%';
+  if(/колич|числ|шт|клиент|продаж|выдач|операц/.test(t) && !/объ[её]м|оборот|сумм/.test(t)) return 'шт.';
+  if(/объ[её]м|оборот|сумм|выруч|доход|расход|стоим|марж/.test(t)) return '₽';
+  return '';
+}
 function rejectUnknownProduct(product) {
   const value=String(product||'').trim();
   if(!value) return false;
@@ -874,12 +881,12 @@ function continueFlow() {
     c.indicator=null; c.unit=null; save(); return ask('indicator','Какой бизнес-показатель должен лежать в основе драйвера?',indicatorNames());
   }
   const indicatorState=checkIndicator(c.indicator);
-  if(indicatorState==='new' && !flow.newIndicatorConfirmed){
-    flow.step='newIndicator'; save();
-    addMessage('agent', `Показатель «${c.indicator}» не найден в справочнике. Я могу подготовить новый показатель по правилам справочника и создать драйвер на его основе. Драйвер будет направлен методологу на согласование. Продолжить?`);
-    renderContextActions(); renderProgress(); return;
+  if(indicatorState==='new'){
+    c.newIndicatorPrepared=true;
+    if(!c.unit) c.unit=inferUnitForNewIndicator(c.indicator);
+    save();
   }
-  if(c.newIndicator && !c.unit) return ask('unit','Укажи единицу измерения нового показателя.',['шт.','₽','%','Другое']);
+  if(c.newIndicator && !c.unit) return ask('unit','В чём измеряем значение драйвера?',['шт.','₽','%','Другое']);
   if(!c.newIndicator) c.unit = unitFor(c.indicator);
   if (!c.product) return ask('product', 'К какому продукту относится драйвер? Напиши название обычным языком — я найду варианты в справочнике.');
   if (rejectUnknownProduct(c.product)) return;
@@ -1072,7 +1079,7 @@ function finalizeDriver() {
   const needsApproval = indicator.status==='Подготовлен';
   const driver={ id:String(Date.now()), name:buildDriverName(c), indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', calcMethod:c.calcMethod||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', modelId:c.modelId||'', modelParams:c.modelParams||null, plAllocations:c.plAllocations||[], incrementMode:c.incrementMode||inferIncrementMode(c), channel:c.channel||'', segment:c.segment||'', status:needsApproval?'На согласовании':'Готов' };
   drivers.unshift(driver); flow=null; lastCreatedDriverId=driver.id; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress();
-  addMessage('agent', needsApproval ? `Готово. «${driver.name}» создан и направлен методологу на согласование. Новый показатель «${indicator.name}» подготовлен и уже виден в реестре показателей.` : `Готово. «${driver.name}» создан со статусом «Готов».`);
+  addMessage('agent', needsApproval ? `Готово. «${driver.name}» создан и направлен на согласование. После согласования он станет доступен для использования.` : `Готово. «${driver.name}» создан со статусом «Готов».`);
   renderContextActions();
   toast('Драйвер создан');
 }
@@ -1090,9 +1097,7 @@ function renderContextActions() {
   const quick=document.getElementById('quickStart');
   if(quick) quick.hidden=!!flow;
   if (!flow) { el.innerHTML=lastCreatedDriverId?`<button data-flow-action="openCreated">Открыть карточку драйвера</button>`:''; return; }
-  if(flow.step==='newIndicator'){
-    el.innerHTML=`<button data-flow-action="confirmNewIndicator">Продолжить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
-  } else if (flow.step==='duplicate') {
+  if (flow.step==='duplicate') {
     el.innerHTML=`<button data-flow-action="useExisting">Открыть драйвер</button><button data-flow-action="updateExisting" class="secondary">Изменить стоимость</button><button data-flow-action="differentAnalytics" class="secondary">Создать с другой аналитикой</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if(flow.step==='duplicateAnalytics'){
     el.innerHTML=`<button data-flow-action="changeProduct">Другой продукт</button><button data-flow-action="addChannel" class="secondary">Добавить / изменить канал</button><button data-flow-action="addSegment" class="secondary">Добавить / изменить сегмент</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
@@ -1118,10 +1123,14 @@ function renderProgress() {
   const el=document.getElementById('progress');
   if (!flow) { el.hidden=true; return; }
   const c=flow.candidate;
-  const hasCost=c.costMode==='monthly'?(c.costProfile||[]).length>0:!!c.cost;
-  const complete=[c.indicator,c.product,c.effectType,c.base&&hasCost].filter(Boolean).length;
+  const understood=[];
+  if(c.indicator) understood.push(c.indicator);
+  if(c.product) understood.push(c.product);
+  if(c.channel) understood.push(c.channel);
+  if(c.segment) understood.push(c.segment);
+  const summary=understood.length?understood.join(' · '):(c.productMention?`${c.productMention} · уточняю детали`:'Уточняю детали');
   el.hidden=false;
-  el.innerHTML=`<div><strong>Создание драйвера</strong><span>${complete}/4 параметров</span></div><div class="progress-track"><i style="width:${complete*25}%"></i></div><small>${escapeHtml(c.indicator||'Показатель не определён')} · ${escapeHtml(c.product||'Продукт не определён')}</small>`;
+  el.innerHTML=`<div><strong>Создание драйвера</strong></div><small>${escapeHtml(summary)}</small>`;
 }
 function renderRegistry() {
   const q=(document.getElementById('registrySearch')?.value||'').trim().toLowerCase();
@@ -1285,7 +1294,7 @@ document.getElementById('contextActions').addEventListener('click',e=>{
     return;
   }
   const actionLabels={
-    cancel:'Отмена', confirmNewIndicator:'Продолжить', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
+    cancel:'Отмена', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
     continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', createFromModel:'Создать драйвер', viewModelCalc:'Посмотреть расчёт',
     redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить'
   };
@@ -1294,7 +1303,6 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   } else if(actionLabels[action]) addMessage('user',actionLabels[action]);
 
   if(action==='cancel') cancelFlow();
-  else if(action==='confirmNewIndicator'){ flow.newIndicatorConfirmed=true; flow.step=''; save(); continueFlow(); }
   else if(action==='confirm') finalizeDriver();
   else if(action==='differentAnalytics'){ flow.step='duplicateAnalytics'; save(); renderContextActions(); }
   else if(action==='changeProduct'){ flow.duplicateId=null; flow.duplicateChecked=false; flow.candidate.product=''; ask('product','Выбери другой продукт для нового драйвера.',PRODUCTS); }

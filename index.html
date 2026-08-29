@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=3.8" />
+  <link rel="stylesheet" href="styles.css?v=3.9" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v3.8</span>
+      <span class="version-pill">v3.9</span>
     </header>
 
     <section class="summary-card">
@@ -33,6 +33,7 @@
     <nav class="tabs" aria-label="Разделы">
       <button class="tab active" data-tab="chat">Агент</button>
       <button class="tab" data-tab="registry">Реестр</button>
+      <button class="tab" data-tab="models">Модели</button>
       <button class="tab" data-tab="settings">Справочники</button>
     </nav>
 
@@ -90,7 +91,7 @@
               <label>Способ расчёта<select id="editCalcMethod"><option value="model">По готовой модели</option><option value="rule">По заданному правилу</option><option value="manual">Ручной ввод</option></select></label><label>Как применяется годовой инкремент<select id="editIncrementMode"><option value="step">Ступенькой с месяца начала эффекта</option><option value="annual_spread">Годовой инкремент распределяется по месяцам</option></select><span class="field-hint">Пользователь всегда задаёт изменение отдельно на каждый год. Месяц начала эффекта применяется только к первому году.</span></label>
               <label id="singleCostWrap" hidden>Эффект, ₽<input id="editCost" inputmode="decimal" /></label>
               <div id="modelParamsWrap" class="profile-field model-params" hidden>
-                <div class="field-title">Параметры модели</div>
+                <div class="field-title">Исходные значения для расчёта</div><div id="modelSourceNote" class="source-note"></div>
                 <div id="creditParamsWrap" class="form-grid">
                   <label id="avgCheckWrap">Средний чек, ₽<input id="editAvgCheck" inputmode="decimal" /></label>
                   <label>Маржа, % годовых<input id="editMargin" inputmode="decimal" /></label>
@@ -100,12 +101,12 @@
                 <div id="conversionWrap" class="form-grid" hidden>
                   <label>Коэффициент перевода сборов в ОД, %<input id="editConversion" inputmode="decimal" /></label>
                 </div>
-                <div class="form-grid"><label>Горизонт, мес.<input id="editHorizon" inputmode="numeric" min="1" max="36" /></label></div>
+                <div class="form-grid"><label>Горизонт расчёта, мес.<input id="editHorizon" inputmode="numeric" min="1" max="36" /></label></div>
                 <span class="field-hint">Годовые ставки календаризуются системой по фактическому числу дней месяца.</span>
                 <button id="recalcModel" type="button" class="secondary-button inline-button">Пересчитать профиль</button>
               </div>
               <div id="profileCostWrap" class="profile-field" hidden>
-                <div class="field-title">Эффект по месяцам, ₽</div>
+                <div class="field-title">Итоговый эффект по месяцам, ₽</div>
                 <div id="editProfileGrid" class="profile-grid collapsed"></div>
                 <div class="profile-controls"><button id="toggleProfileRows" type="button" class="secondary-button inline-button">Показать все</button><button id="addProfileMonth" type="button" class="secondary-button inline-button">+ месяц</button></div>
                 <strong id="editProfileTotal" class="profile-total"></strong>
@@ -144,6 +145,13 @@
       </div>
     </section>
 
+    <section id="models" class="panel">
+      <div class="section-head"><div><h2>Модели расчёта</h2><p>Единые правила расчёта стоимости модельных драйверов. Логика модели переиспользуется и не редактируется в карточке драйвера.</p></div><span id="modelCount"></span></div>
+      <div class="table-card model-registry-card">
+        <div class="table-wrap"><table><thead><tr><th>Модель и бизнес-логика</th><th>Продукты</th><th>Показатель драйвера</th><th>Используемые исходные показатели</th><th>Статьи P&amp;L</th></tr></thead><tbody id="modelDict"></tbody></table></div>
+      </div>
+    </section>
+
     <section id="settings" class="panel">
       <div class="llm-card">
         <div class="llm-head">
@@ -165,15 +173,11 @@
         <div class="table-title"><h3>Продукты</h3><span id="productCount"></span></div>
         <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="productDict"></tbody></table></div>
       </div>
-      <div class="table-card model-registry-card">
-        <div class="table-title"><div><h3>Модели расчёта</h3><p>Готовые модели и показатели, для которых агент применяет их автоматически.</p></div><span id="modelCount"></span></div>
-        <div class="table-wrap"><table><thead><tr><th>Модель и бизнес-логика</th><th>Продукты</th><th>Показатель драйвера</th><th>Параметры</th><th>Статьи P&amp;L</th></tr></thead><tbody id="modelDict"></tbody></table></div>
-      </div>
       <button id="resetButton" class="ghost-danger full">Сбросить демо-данные</button>
     </section>
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=3.8"></script>
+  <script src="app.js?v=3.9"></script>
 </body>
 </html>

@@ -276,7 +276,7 @@ const seedDrivers = [
 ];
 const seedMessages = [{
   id: 'hello', role: 'agent',
-  text: 'Привет! Я помогу создать драйвер. Напиши запрос обычным языком — например: «Создай драйвер количества выдач по ипотеке». Я проверю реестр, уточню недостающие параметры и покажу карточку перед созданием.'
+  text: 'Что нужно сделать? Опиши задачу обычным языком.'
 }];
 
 let drivers = load(REGISTRY_KEY, seedDrivers);
@@ -343,6 +343,16 @@ function toast(text) {
   clearTimeout(toast.timer); toast.timer = setTimeout(() => el.classList.remove('show'), 1800);
 }
 
+function extractUnresolvedProductMention(text){
+  const raw=String(text||'').trim();
+  // Явная конструкция «драйвер для X» — X является кандидатом продукта.
+  // Используем только для ранней проверки, если retrieval не нашёл справочную сущность.
+  const m=raw.match(/(?:драйвер(?:а|у|ом)?\s+)?для\s+([^,.;!?]+)$/i);
+  if(!m) return null;
+  let value=m[1].trim().replace(/^(?:продукта?|по)\s+/i,'').trim();
+  if(!value || value.split(/\s+/).length>5) return null;
+  return value.charAt(0).toUpperCase()+value.slice(1);
+}
 function detect(text) {
   const t = text.toLowerCase().replace(/ё/g,'е');
   const genericInsurance = t.includes('страхов') || t.includes('страхован');
@@ -394,7 +404,8 @@ function detect(text) {
     productChoices = ['ОСАГО','КАСКО','Кредитные карты'];
   }
   const productGroup = productChoices ? 'ambiguous' : (!product && genericCredit ? 'credit' : (!product && genericInsurance ? 'insurance' : null));
-  return { indicator, product, effectType, productGroup, productChoices };
+  const productMention = !product && !productChoices && !productGroup ? extractUnresolvedProductMention(text) : null;
+  return { indicator, product, effectType, productGroup, productChoices, productMention };
 }
 function normalizeText(value){ return String(value||'').trim().toLowerCase().replace(/ё/g,'е').replace(/[–—-]/g,' ').replace(/\s+/g,' '); }
 function canonicalFromList(value, list) {
@@ -765,6 +776,23 @@ function defaultModelParams(c, model){
 function continueFlow() {
   if (!flow) return;
   const c = flow.candidate;
+  // Если пользователь уже назвал предполагаемый продукт в исходной фразе,
+  // сначала валидируем его. Не задаём вопросы про показатель для заведомо
+  // несуществующего продукта.
+  if(!c.product && c.productMention){
+    const pd=productDecision(c.productMention);
+    if(pd.status==='auto') { c.product=pd.value; c.productMention=null; save(); }
+    else if(pd.status==='clarify') { c.productChoices=pd.candidates.map(x=>x.entity.name); c.productGroup='ambiguous'; c.productMention=null; save(); }
+    else {
+      const unknown=c.productMention; addMessage('agent', `Продукт «${unknown}» не найден в справочнике. Проверь название или укажи другой продукт.`);
+      flow=null; save(); renderContextActions(); renderProgress(); return;
+    }
+  }
+  // Сначала разрешаем уже обнаруженную неоднозначность продукта: это обязательная
+  // сущность, и нет смысла собирать остальные параметры до её проверки.
+  if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices);
+  if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS);
+  if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS);
   if (!c.indicator) return ask('indicator', 'Какой показатель должен лежать в основе драйвера?', indicatorNames());
   if(isPlArticle(c.indicator)){
     addMessage('agent', `«${c.indicator}» — статья P&L, а статья P&L не может быть драйвером. Укажи бизнес-показатель, изменение которого формирует эту статью — например, объём или количество выдач.`);
@@ -778,11 +806,6 @@ function continueFlow() {
   }
   if(c.newIndicator && !c.unit) return ask('unit','Укажи единицу измерения нового показателя.',['шт.','₽','%','Другое']);
   if(!c.newIndicator) c.unit = unitFor(c.indicator);
-  if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) {
-    return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices);
-  }
-  if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS);
-  if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS);
   if (!c.product) return ask('product', 'К какому продукту относится драйвер? Напиши название обычным языком — я найду варианты в справочнике.');
   if (rejectUnknownProduct(c.product)) return;
 
@@ -989,6 +1012,8 @@ function renderMessages() {
 }
 function renderContextActions() {
   const el=document.getElementById('contextActions');
+  const quick=document.getElementById('quickStart');
+  if(quick) quick.hidden=!!flow;
   if (!flow) { el.innerHTML=lastCreatedDriverId?`<button data-flow-action="openCreated">Открыть карточку драйвера</button>`:''; return; }
   if(flow.step==='newIndicator'){
     el.innerHTML=`<button data-flow-action="confirmNewIndicator">Продолжить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;

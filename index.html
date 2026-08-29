@@ -40,7 +40,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <div class="top-actions"><span class="version-pill">v5.1</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
+      <div class="top-actions"><span class="version-pill">v5.2</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
     </header>
 
     <section class="summary-card">
@@ -53,7 +53,6 @@
       <button class="tab active" data-tab="chat">Агент</button>
       <button class="tab" data-tab="registry">Реестр</button>
       <button class="tab" data-tab="models">Модели</button>
-      <button class="tab" data-tab="settings">Справочники</button>
     </nav>
 
     <section id="chat" class="panel active">
@@ -181,7 +180,7 @@
       <div id="modelList" class="model-list"></div>
     </section>
 
-    <section id="settings" class="panel">
+    <section id="settings" class="panel admin-only" hidden>
       <div class="section-head"><div><h2>Справочники</h2><p>Тестовые данные, которые агент использует при разборе запроса.</p></div></div>
       <div class="table-card">
         <div class="table-title"><h3>Показатели</h3><span id="indicatorCount"></span></div>
@@ -210,7 +209,7 @@
         <div><strong>Проверка соединения</strong><p id="llmMeta">Используй, если агент перестал отвечать как обычно.</p></div>
         <button id="testLlm" type="button" class="secondary-button">Проверить</button>
       </div>
-      <div class="settings-block scale-test-block">
+      <div class="settings-block scale-test-block" hidden>
         <div><strong>Масштабный тест</strong><p>Проверка retrieval на 1 500 продуктах, 100 каналах, 50 сегментах и 1 500 драйверах.</p><div id="scaleTestResult" class="scale-test-result">Не запускался</div></div>
         <button id="runScaleTest" type="button" class="secondary-button">Запустить</button>
       </div>
@@ -227,6 +226,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=5.1"></script>
+  <script src="app.js?v=5.2"></script>
 </body>
 </html>

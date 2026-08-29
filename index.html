@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=3.3" />
+  <link rel="stylesheet" href="styles.css?v=3.4" />
   <title>Driver Agent</title>
 </head>
 <body>
@@ -21,7 +21,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v3.3</span>
+      <span class="version-pill">v3.4</span>
     </header>
 
     <section class="summary-card">
@@ -87,7 +87,7 @@
                 <input id="editUnitOther" class="conditional-field" placeholder="Укажи единицу измерения" hidden />
               </label>
               <label>База стоимости<select id="editBase"><option value="">Не выбрана</option><option value="1">1</option><option value="1000">1 000</option><option value="1000000">1 млн</option><option value="1000000000">1 млрд</option></select></label>
-              <label>Стоимость, ₽<input id="editCost" inputmode="decimal" /></label>
+              <label>Как возникает эффект<select id="editCostMode"><option value="single">Одно значение</option><option value="monthly">По месяцам</option></select></label><label id="singleCostWrap">Эффект, ₽<input id="editCost" inputmode="decimal" /></label><label id="profileCostWrap" class="profile-field" hidden>Эффект по месяцам, ₽<textarea id="editCostProfile" rows="4" placeholder="Например: 8000; 7500; 7000"></textarea><span class="field-hint">До 36 месяцев. Можно вставить ряд из Excel.</span></label>
             </div>
           </div>
           <div class="form-section">
@@ -135,6 +135,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=3.3"></script>
+  <script src="app.js?v=3.4"></script>
 </body>
 </html>

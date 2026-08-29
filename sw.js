@@ -1,4 +1,4 @@
-const CACHE='driver-agent-v3.3-20260829-1';
+const CACHE='driver-agent-v3.4-20260829-2';
 const ASSETS=['./','./index.html','./styles.css?v=3.3','./app.js?v=3.3','./manifest.webmanifest','./icon-180.png','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)))});
 self.addEventListener('activate',e=>{e.waitUntil(Promise.all([caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))),self.clients.claim()]))});

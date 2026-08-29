@@ -75,3 +75,4 @@ body.keyboard-open .chat-session-bar{display:none}body.keyboard-open #chat .prog
   .registry-cost-mobile{display:block!important;margin-top:5px!important;color:#9aa7ca!important;font-size:10px!important}
   .registry-row .badge{max-width:76px;overflow:hidden;text-overflow:ellipsis}
 }
+.profile-field{grid-column:1/-1}.profile-field textarea{width:100%;resize:vertical;min-height:88px}.field-hint{display:block;margin-top:6px;font-size:12px;color:var(--muted,#6b7280)}

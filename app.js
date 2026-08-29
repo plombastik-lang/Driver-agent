@@ -17,6 +17,9 @@ const INDICATOR_META = {
   'Уровень проникновения': '%'
 };
 let indicatorRegistry = load(INDICATOR_REGISTRY_KEY, Object.entries(INDICATOR_META).map(([name,unit])=>({name,unit,status:'Активен'})));
+// Удаляем тестовые записи из старых локальных данных и восстанавливаем базовые активные показатели.
+indicatorRegistry = indicatorRegistry.filter(x => normalizeText(x.name) !== normalizeText('Сокращение пробега'));
+for (const [name,unit] of Object.entries(INDICATOR_META)) if(!indicatorRegistry.some(x=>normalizeText(x.name)===normalizeText(name))) indicatorRegistry.push({name,unit,status:'Активен'});
 function indicatorNames(){ return indicatorRegistry.map(x=>x.name); }
 function indicatorRecord(name){ const c=canonicalFromList(name, indicatorNames()); return c ? indicatorRegistry.find(x=>x.name===c) : null; }
 const PRODUCTS = ['Ипотека','Кредитование','Страхование','Карты','Вклады','Бонусная программа','Общий'];
@@ -43,7 +46,9 @@ drivers = drivers.map(d => ({
   channel: d.channel || '',
   segment: d.segment || '',
   unit: unitFor(d.indicator) || d.unit || '',
-  status: d.status === 'Готов' && !String(d.cost || '').trim() ? 'Черновик' : d.status
+  costMode: d.costMode || (Array.isArray(d.costProfile) && d.costProfile.length>1 ? 'monthly' : 'single'),
+  costProfile: Array.isArray(d.costProfile) ? d.costProfile : (String(d.cost||'').trim() ? [String(d.cost)] : []),
+  status: d.status === 'Готов' && !String(d.cost || '').trim() && !(Array.isArray(d.costProfile)&&d.costProfile.length) ? 'Черновик' : d.status
 }));
 function normalizeStoredBase(base){
   const s=String(base||'').toLowerCase().replace(/\s/g,'');
@@ -107,11 +112,13 @@ function detect(text) {
 
   return { indicator, product, effectType };
 }
+function normalizeText(value){ return String(value||'').trim().toLowerCase().replace(/ё/g,'е').replace(/[–—-]/g,' ').replace(/\s+/g,' '); }
 function canonicalFromList(value, list) {
-  const raw=String(value||'').trim();
+  const raw=normalizeText(value);
   if(!raw) return null;
-  return list.find(x=>x.toLowerCase()===raw.toLowerCase()) || null;
+  return list.find(x=>normalizeText(x)===raw) || null;
 }
+
 function unitFor(indicator) {
   const rec=indicatorRecord(indicator);
   return rec ? rec.unit : null;
@@ -217,7 +224,7 @@ async function processUserText(text){
     const expectedStep=flow?.step||'';
     const data=await callOpenRouter(text,flow?.candidate||{},expectedStep);
     if(!flow){
-      flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',channel:'',segment:'',status:'Черновик'},original:text};
+      flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',costMode:'',costProfile:[],channel:'',segment:'',status:'Черновик'},original:text};
     }
     mergeLlmCandidate(data);
     if(expectedStep && !data[expectedStep]){
@@ -253,7 +260,7 @@ async function testLlmConnection(){
 
 function startFlow(text) {
   const detected = detect(text);
-  flow = { step:'', candidate:{ ...detected, unit: detected.indicator ? unitFor(detected.indicator) : null, base:'', cost:'', channel:'', segment:'', status:'Черновик' }, original:text };
+  flow = { step:'', candidate:{ ...detected, unit: detected.indicator ? unitFor(detected.indicator) : null, base:'', cost:'', costMode:'', costProfile:[], channel:'', segment:'', status:'Черновик' }, original:text };
   save();
   continueFlow();
 }
@@ -302,7 +309,9 @@ function continueFlow() {
   }
   if (!c.effectType) return ask('effectType', 'Какой тип эффекта у драйвера?', ['Доходы','Расходы']);
   if (!c.base) return ask('base', 'Выбери базу стоимости драйвера.', ['1','1 000','1 млн','1 млрд']);
-  if (!c.cost) return ask('cost', `Укажи стоимость в рублях для базы ${baseLabel(c.base)}. Например: «2500».`);
+  if (!c.costMode) return ask('costMode', 'Как возникает эффект от изменения показателя?', ['Одно значение','По месяцам']);
+  if (c.costMode==='single' && !c.cost) return ask('cost', `Укажи эффект в рублях для базы ${baseLabel(c.base)}. Например: «2500».`);
+  if (c.costMode==='monthly' && !(c.costProfile||[]).length) return ask('costProfile', `Укажи эффект по месяцам для базы ${baseLabel(c.base)}. Можно вставить значения из Excel или написать через «;». Например: 8000; 7500; 7000. Максимум 36 месяцев.`);
   showPreview();
 }
 function ask(step, text, options=[]) {
@@ -317,6 +326,13 @@ function handleFlowAnswer(text) {
   else if (flow.step === 'product') c.product = text.trim();
   else if (flow.step === 'effectType') c.effectType = normalizeEffect(text);
   else if (flow.step === 'base') c.base = normalizeBaseAnswer(text);
+  else if (flow.step === 'costMode') c.costMode = normalizeText(text).includes('месяц') ? 'monthly' : 'single';
+  else if (flow.step === 'costProfile') {
+    const profile=parseCostProfile(text);
+    if(!profile.length){ addMessage('agent','Не смог разобрать значения. Вставь суммы по месяцам, например: 8000; 7500; 7000.'); return; }
+    if(profile.length>36){ addMessage('agent','Можно указать максимум 36 месяцев. Сократи профиль до 36 значений.'); return; }
+    c.costProfile=profile; c.cost=profile[0];
+  }
   else if (flow.step === 'cost') {
     const parsed = parseCost(text);
     if (!parsed) {
@@ -342,6 +358,17 @@ function parseCost(text) {
   const n=text.replace(/\s/g,'').replace(',','.').match(/\d+(?:\.\d+)?/);
   return n ? {cost:n[0]} : null;
 }
+function parseCostProfile(text){
+  let raw=String(text||'').trim(); if(!raw) return [];
+  let parts = /[;\n\t]/.test(raw) ? raw.split(/[;\n\t]+/) : raw.split(/,\s*(?=\d)/);
+  return parts.map(x=>parseCost(x)?.cost).filter(Boolean).slice(0,37);
+}
+function costSummary(d){
+  const p=Array.isArray(d.costProfile)?d.costProfile:[];
+  if(d.costMode==='monthly' || p.length>1) return `${p[0]||d.cost||'—'} ₽ · профиль ${p.length||1} мес.`;
+  return `${d.cost||'—'} ₽`;
+}
+
 function showPreview() {
   const c=flow.candidate; c.name = `${c.indicator} — ${c.product}`;
   flow.step='preview'; save();
@@ -352,16 +379,17 @@ ${c.name}
 Продукт: ${c.product}
 Тип эффекта: ${c.effectType}
 База стоимости: ${baseLabel(c.base)}
-Стоимость: ${c.cost} ₽`,'preview');
+${c.costMode==='monthly' ? `Профиль эффекта: ${(c.costProfile||[]).length} мес.\nM1–M${(c.costProfile||[]).length}: ${(c.costProfile||[]).join('; ')} ₽` : `Эффект: ${c.cost} ₽`}`,'preview');
   renderContextActions(); renderProgress();
 }
 function finalizeDriver() {
   const c=flow.candidate;
   let indicator=indicatorRecord(c.indicator);
   if(!indicator){ indicator={name:c.indicator,unit:c.unit,status:'Подготовлен'}; indicatorRegistry.push(indicator); }
-  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, channel:c.channel||'', segment:c.segment||'', status:'На согласовании' };
+  const needsApproval = indicator.status==='Подготовлен';
+  const driver={ id:String(Date.now()), name:`${c.indicator} — ${c.product}`, indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], channel:c.channel||'', segment:c.segment||'', status:needsApproval?'На согласовании':'Готов' };
   drivers.unshift(driver); flow=null; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress(); renderContextActions();
-  addMessage('agent', `Готово. «${driver.name}» создан и направлен методологу на согласование.${indicator.status==='Подготовлен' ? ` Новый показатель «${indicator.name}» автоматически подготовлен по правилам справочника и уже виден в реестре показателей.` : ''}`);
+  addMessage('agent', needsApproval ? `Готово. «${driver.name}» создан и направлен методологу на согласование. Новый показатель «${indicator.name}» подготовлен и уже виден в реестре показателей.` : `Готово. «${driver.name}» создан со статусом «Готов». Показатель уже есть в справочнике, поэтому дополнительное согласование не требуется.`);
   toast('Драйвер создан');
 }
 function cancelFlow() {
@@ -390,7 +418,8 @@ function renderProgress() {
   const el=document.getElementById('progress');
   if (!flow) { el.hidden=true; return; }
   const c=flow.candidate;
-  const complete=[c.indicator,c.product,c.effectType,c.base&&c.cost].filter(Boolean).length;
+  const hasCost=c.costMode==='monthly'?(c.costProfile||[]).length>0:!!c.cost;
+  const complete=[c.indicator,c.product,c.effectType,c.base&&hasCost].filter(Boolean).length;
   el.hidden=false;
   el.innerHTML=`<div><strong>Создание драйвера</strong><span>${complete}/4 параметров</span></div><div class="progress-track"><i style="width:${complete*25}%"></i></div><small>${escapeHtml(c.indicator||'Показатель не определён')} · ${escapeHtml(c.product||'Продукт не определён')}</small>`;
 }
@@ -403,13 +432,13 @@ function renderRegistry() {
     const expanded=expandedDriverId===d.id;
     return `<div class="registry-item ${expanded?'expanded':''}" data-driver-id="${d.id}">
       <button class="registry-row" type="button" aria-expanded="${expanded}">
-        <span class="registry-main"><strong>${escapeHtml(d.name)}</strong><small class="registry-cost-mobile">${escapeHtml(d.cost||'—')} ₽ за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
-        <span class="registry-cost"><strong>${escapeHtml(d.cost||'—')} ₽</strong><small>за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
+        <span class="registry-main"><strong>${escapeHtml(d.name)}</strong><small class="registry-cost-mobile">${escapeHtml(costSummary(d))} за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
+        <span class="registry-cost"><strong>${escapeHtml(costSummary(d))}</strong><small>за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
         <span class="badge ${d.status==='Готов'?'ready':['Требует согласования','На согласовании'].includes(d.status)?'approval':''}">${escapeHtml(d.status)}</span>
         <i class="row-chevron">⌄</i>
       </button>
       <div class="registry-expanded" ${expanded?'':'hidden'}>
-        <div class="meta-grid">${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${meta('Канал',d.channel||'—')}${meta('Сегмент',d.segment||'—')}</div>
+        <div class="meta-grid">${meta('Профиль эффекта',(d.costMode==='monthly'||(d.costProfile||[]).length>1)?`${(d.costProfile||[]).length} мес.`:'Одно значение')}${meta('Тип эффекта',d.effectType)}${meta('Показатель',d.indicator)}${meta('Продукт',d.product)}${meta('Единица измерения',d.unit)}${meta('Канал',d.channel||'—')}${meta('Сегмент',d.segment||'—')}</div>
         <button class="edit-driver-button" type="button" data-edit-driver="${d.id}">Открыть карточку</button>
       </div>
     </div>`;
@@ -448,7 +477,10 @@ function openDriver(id){
   document.getElementById('editChannel').value=d.channel||'';
   document.getElementById('editSegment').value=d.segment||'';
   document.getElementById('editBase').value=d.base||'';
+  document.getElementById('editCostMode').value=d.costMode||'single';
   document.getElementById('editCost').value=d.cost||'';
+  document.getElementById('editCostProfile').value=(d.costProfile||[]).join('; ');
+  syncCostEditor();
   document.getElementById('editStatus').value=d.status;
   document.getElementById('detailHeading').textContent=d.name;
   document.getElementById('approveDriver').hidden=d.status!=='На согласовании';
@@ -497,15 +529,19 @@ document.getElementById('approveDriver').addEventListener('click',()=>{
 });
 document.getElementById('driverForm').addEventListener('submit',e=>{
   e.preventDefault(); const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
-  const cost=document.getElementById('editCost').value.trim();
+  const costMode=document.getElementById('editCostMode').value;
+  const costProfile=costMode==='monthly'?parseCostProfile(document.getElementById('editCostProfile').value):[];
+  const cost=costMode==='monthly'?(costProfile[0]||''):document.getElementById('editCost').value.trim();
   const status=document.getElementById('editStatus').value;
   if(status==='Готов' && !cost){ toast('Сначала укажи стоимость'); document.getElementById('editCost').focus(); return; }
   const selectedUnit=document.getElementById('editUnit').value;
   const unit=selectedUnit==='other' ? document.getElementById('editUnitOther').value.trim() : selectedUnit;
   if(!unit){ toast('Укажи единицу измерения'); return; }
-  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit,channel:document.getElementById('editChannel').value.trim(),segment:document.getElementById('editSegment').value.trim(),base:document.getElementById('editBase').value,cost,status});
+  Object.assign(d,{name:document.getElementById('editName').value.trim(),indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),effectType:document.getElementById('editEffectType').value,unit,channel:document.getElementById('editChannel').value.trim(),segment:document.getElementById('editSegment').value.trim(),base:document.getElementById('editBase').value,cost,costMode,costProfile:costMode==='monthly'?costProfile:[cost],status});
   save();renderRegistry();updateSummary();closeDriver();toast('Изменения сохранены');
 });
+function syncCostEditor(){ const monthly=document.getElementById('editCostMode').value==='monthly'; document.getElementById('singleCostWrap').hidden=monthly; document.getElementById('profileCostWrap').hidden=!monthly; }
+document.getElementById('editCostMode').addEventListener('change',syncCostEditor);
 document.getElementById('editUnit').addEventListener('change',e=>{
   const other=document.getElementById('editUnitOther');
   other.hidden=e.target.value!=='other';
@@ -536,7 +572,7 @@ document.getElementById('endSession').addEventListener('click',()=>{
 
 document.getElementById('resetButton').addEventListener('click',()=>{
   if(!confirm('Сбросить реестр, диалог и незавершённое создание?'))return;
-  drivers=clone(seedDrivers);messages=clone(seedMessages);flow=null;save();renderAll();toast('Демо-данные восстановлены');
+  drivers=clone(seedDrivers);messages=clone(seedMessages);flow=null;indicatorRegistry=Object.entries(INDICATOR_META).map(([name,unit])=>({name,unit,status:'Активен'}));save();renderAll();toast('Демо-данные восстановлены');
 });
 
 // iPhone/PWA: при открытой клавиатуре фиксируем оболочку в visual viewport,

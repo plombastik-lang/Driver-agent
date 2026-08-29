@@ -334,7 +334,7 @@ function renderRegistry() {
     const expanded=expandedDriverId===d.id;
     return `<div class="registry-item ${expanded?'expanded':''}" data-driver-id="${d.id}">
       <button class="registry-row" type="button" aria-expanded="${expanded}">
-        <span class="registry-main"><strong>${escapeHtml(d.name)}</strong><small>${escapeHtml(d.effectType)} · ${escapeHtml(d.product)}</small><small class="registry-cost-mobile">${escapeHtml(d.cost||'—')} ₽ за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
+        <span class="registry-main"><strong>${escapeHtml(d.name)}</strong><small class="registry-cost-mobile">${escapeHtml(d.cost||'—')} ₽ за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
         <span class="registry-cost"><strong>${escapeHtml(d.cost||'—')} ₽</strong><small>за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</small></span>
         <span class="badge ${d.status==='Готов'?'ready':d.status==='Требует согласования'?'approval':''}">${escapeHtml(d.status)}</span>
         <i class="row-chevron">⌄</i>

@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=4.3" />
+  <link rel="stylesheet" href="styles.css?v=4.4" />
   <title>Driver Agent</title>
 </head>
 <body class="auth-pending">
@@ -40,7 +40,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v4.3</span>
+      <span class="version-pill">v4.4</span>
     </header>
 
     <section class="summary-card">
@@ -183,7 +183,7 @@
       <div class="section-head"><div><h2>Справочники</h2><p>Тестовые данные, которые агент использует при разборе запроса.</p></div></div>
       <div class="table-card">
         <div class="table-title"><h3>Показатели</h3><span id="indicatorCount"></span></div>
-        <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Единица измерения</th><th>Статус</th></tr></thead><tbody id="indicatorDict"></tbody></table></div>
+        <div class="table-wrap indicator-table-wrap"><table class="indicator-table"><thead><tr><th>Наименование</th><th>Ед.</th><th>Статус</th></tr></thead><tbody id="indicatorDict"></tbody></table></div>
       </div>
       <div class="table-card">
         <div class="table-title"><h3>Продукты</h3><span id="productCount"></span></div>
@@ -199,6 +199,6 @@
   </main>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=4.3"></script>
+  <script src="app.js?v=4.4"></script>
 </body>
 </html>

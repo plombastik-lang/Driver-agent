@@ -132,3 +132,18 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
 .auth-form label{display:block;color:#aab4d1;font-size:12px;font-weight:800;margin-bottom:7px}.password-row{position:relative}.password-row input{width:100%;height:52px;border:1px solid #2d3a63;border-radius:14px;background:#0b1221;color:#fff;padding:0 92px 0 14px;outline:none;font-size:16px}.password-row input:focus{border-color:#4f6aff;box-shadow:0 0 0 3px rgba(79,106,255,.15)}
 .password-toggle{position:absolute;right:8px;top:8px;height:36px;border:0;border-radius:10px;background:#17213a;color:#aeb8d6;padding:0 10px;font-size:11px;font-weight:800}.auth-submit{margin-top:12px}.auth-error{margin-top:10px;padding:10px 12px;border-radius:11px;background:#2a151d;border:1px solid #63303e;color:#ffb5c1;font-size:12px}.auth-note{display:block;margin-top:15px;color:#65718f;line-height:1.45}
 .account-card{display:flex;justify-content:space-between;align-items:center;gap:14px;background:#11192b;border:1px solid #222e4e;border-radius:17px;padding:14px;margin:12px 0}.account-card strong{display:block;margin-top:4px;font-size:13px}.account-card p{margin:4px 0 0;color:#7f8aa8;font-size:11px;line-height:1.4}.account-card .secondary-button{flex:0 0 auto}
+
+/* v4.4: compact indicator dictionary on mobile */
+.indicator-table-wrap{overflow-x:hidden}
+.indicator-table{min-width:0;table-layout:fixed;width:100%}
+.indicator-table th:nth-child(1),.indicator-table td:nth-child(1){width:52%}
+.indicator-table th:nth-child(2),.indicator-table td:nth-child(2){width:16%;white-space:nowrap;text-align:center}
+.indicator-table th:nth-child(3),.indicator-table td:nth-child(3){width:32%;text-align:right;white-space:nowrap}
+.indicator-table td,.indicator-table th{padding-left:10px;padding-right:10px}
+.indicator-table .table-status{white-space:nowrap}
+@media(max-width:430px){
+  .indicator-table td{font-size:11px}
+  .indicator-table th{font-size:8px;letter-spacing:.045em}
+  .indicator-table td,.indicator-table th{padding-left:8px;padding-right:8px}
+  .indicator-table .table-status{font-size:8px;padding:4px 6px}
+}

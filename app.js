@@ -271,7 +271,7 @@ const DRIVER_MODELS = {
     id:'insurance_income_v1',
     title:'Страхование',
     calculation:'Перевод сборов в чистый комиссионный доход',
-    businessLogic:'Финансовый эффект рассчитывается за один месяц: объём страховых сборов умножается на коэффициент перевода сборов в ОД. Полученный эффект относится на чистый комиссионный доход. Деление годового значения на 12 и календаризация для этой модели не применяются.',
+    businessLogic:'Финансовый эффект рассчитывается за один месяц: объём страховых сборов умножается на коэффициент перевода сборов в ОД. Полученный эффект относится на чистый комиссионный доход.',
     products:INSURANCE_PRODUCTS,
     effectType:'Доходы',
     plArticles:['Чистый комиссионный доход'],
@@ -748,7 +748,7 @@ function parseCostProfile(text){
 function costSummary(d){
   const p=Array.isArray(d.costProfile)?d.costProfile:[];
   if(d.costMode==='monthly' || p.length>1) return `${formatMoney(profileTotal(p))} ₽ · профиль ${p.length||1} мес.`;
-  return `${d.cost||'—'} ₽`;
+  return d.cost!==undefined && d.cost!==null && d.cost!=='' ? `${formatMoney(d.cost)} ₽` : '— ₽';
 }
 
 function showPreview() {

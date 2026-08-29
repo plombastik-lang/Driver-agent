@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=4.4" />
+  <link rel="stylesheet" href="styles.css?v=4.5" />
   <title>Driver Agent</title>
 </head>
 <body class="auth-pending">
@@ -40,7 +40,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <span class="version-pill">v4.4</span>
+      <div class="top-actions"><span class="version-pill">v4.5</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
     </header>
 
     <section class="summary-card">
@@ -120,11 +120,12 @@
                   <label>Маржа, % годовых<input id="editMargin" inputmode="decimal" /></label>
                   <label>Уровень риска, % годовых<input id="editRisk" inputmode="decimal" /></label>
                   <label>Уровень погашения, % в месяц<input id="editRepayment" inputmode="decimal" /></label>
+                  <label>Срок кредита, лет<input id="editCreditTermYears" inputmode="decimal" /></label>
                 </div>
                 <div id="conversionWrap" class="form-grid" hidden>
                   <label>Коэффициент перевода сборов в ОД, %<input id="editConversion" inputmode="decimal" /></label>
                 </div>
-                <div class="form-grid"><label>Горизонт расчёта, мес.<input id="editHorizon" inputmode="numeric" min="1" max="36" /></label></div>
+                <div class="form-grid"><label>Горизонт расчёта, мес.<input id="editHorizon" inputmode="numeric" min="1" max="36" readonly /></label></div>
                 <span class="field-hint">Годовые ставки календаризуются системой по фактическому числу дней месяца.</span>
                 <button id="recalcModel" type="button" class="secondary-button inline-button">Пересчитать</button>
                 <button id="detailModelLink" type="button" class="secondary-button inline-button" hidden>Открыть модель</button>
@@ -169,17 +170,6 @@
     </section>
 
     <section id="settings" class="panel">
-      <div class="llm-card">
-        <div class="llm-head">
-          <div><span class="mini-label">Сервис</span><h2>Проверка соединения</h2></div>
-          <span id="llmStatus" class="llm-status online">Доступно</span>
-        </div>
-        <div class="llm-actions">
-          <button id="testLlm" type="button" class="secondary-button">Проверить</button>
-        </div>
-        <div id="llmMeta" class="llm-meta">Используй проверку, если агент перестал отвечать как обычно.</div>
-      </div>
-
       <div class="section-head"><div><h2>Справочники</h2><p>Тестовые данные, которые агент использует при разборе запроса.</p></div></div>
       <div class="table-card">
         <div class="table-title"><h3>Показатели</h3><span id="indicatorCount"></span></div>
@@ -191,14 +181,36 @@
       </div>
       <div class="table-card">
         <div class="table-title"><h3>Статьи P&amp;L</h3><span id="plArticleCount"></span></div>
-        <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="plArticleDict"></tbody></table></div>
+        <div class="table-wrap pl-dict-wrap"><table class="pl-dict-table"><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="plArticleDict"></tbody></table></div>
       </div>
-      <div class="account-card"><div><span class="mini-label">Доступ</span><strong>Это устройство авторизовано</strong><p>Пароль повторно не потребуется до окончания сессии устройства.</p></div><button id="logoutButton" type="button" class="secondary-button">Выйти</button></div>
-      <button id="resetButton" class="ghost-danger full">Сбросить демо-данные</button>
     </section>
   </main>
 
+
+  <div id="settingsModal" class="settings-modal" hidden>
+    <div class="settings-backdrop" data-close-settings></div>
+    <section class="settings-sheet" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="settings-sheet-head">
+        <div><span class="mini-label">Driver Agent</span><h2 id="settingsTitle">Настройки</h2></div>
+        <button id="closeSettings" class="icon-close" type="button" aria-label="Закрыть">×</button>
+      </div>
+      <div class="settings-block">
+        <div><strong>Проверка соединения</strong><p id="llmMeta">Используй, если агент перестал отвечать как обычно.</p></div>
+        <button id="testLlm" type="button" class="secondary-button">Проверить</button>
+      </div>
+      <div class="settings-block">
+        <div><strong>Демо-данные</strong><p>Вернуть исходный набор драйверов и очистить текущий диалог.</p></div>
+        <button id="resetButton" type="button" class="secondary-button">Сбросить</button>
+      </div>
+      <div class="settings-block">
+        <div><strong>Доступ</strong><p>Пароль на этом устройстве запомнен на 30 дней.</p></div>
+        <button id="logoutButton" type="button" class="secondary-button">Выйти</button>
+      </div>
+      <span id="llmStatus" class="llm-status online" hidden>Доступно</span>
+    </section>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=4.4"></script>
+  <script src="app.js?v=4.5"></script>
 </body>
 </html>

@@ -1,4 +1,4 @@
-const REGISTRY_KEY = 'driver-agent.pwa.registry.v6';
+const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
@@ -65,19 +65,19 @@ const seedDrivers = [
   {
     id:'demo-credit-volume-mortgage', name:'Объём выдач Ипотечное кредитование', indicator:'Объём выдач', product:'Ипотечное кредитование',
     unit:'₽', effectType:'Доходы', base:'1000000', channel:'', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
-    modelParams:{margin:'12',risk:'2.4',repayment:'2',horizon:36,sources:{margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
+    modelParams:{margin:'12',risk:'2.4',repayment:'2',creditTermYears:'15',horizon:36,sources:{margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
     costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
   },
   {
     id:'demo-credit-count-consumer', name:'Количество выдач Потребительский кредит Онлайн Массовый', indicator:'Количество выдач', product:'Потребительский кредит',
     unit:'шт.', effectType:'Доходы', base:'1', channel:'Онлайн', segment:'Массовый', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
-    modelParams:{avgCheck:'650000',margin:'14',risk:'4',repayment:'4',horizon:24,sources:{avgCheck:'Прогнозная модель',margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
+    modelParams:{avgCheck:'650000',margin:'14',risk:'4',repayment:'4',creditTermYears:'2',horizon:24,sources:{avgCheck:'Прогнозная модель',margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
     costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
   },
   {
     id:'demo-credit-volume-auto', name:'Объём выдач Автокредит Партнёрский', indicator:'Объём выдач', product:'Автокредит',
     unit:'₽', effectType:'Доходы', base:'1000000', channel:'Партнёрский', segment:'', incrementMode:'annual_spread', calcMethod:'model', modelId:'credit_income_v2',
-    modelParams:{margin:'11',risk:'3',repayment:'3',horizon:24,sources:{margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
+    modelParams:{margin:'11',risk:'3',repayment:'3',creditTermYears:'5',horizon:36,sources:{margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},
     costMode:'monthly', costProfile:[], plAllocations:[], costLogicText:'', businessRationale:'', status:'Готов'
   },
   {
@@ -257,14 +257,14 @@ const DRIVER_MODELS = {
     id:'credit_income_v2',
     title:'Кредиты',
     calculation:'Финансовый эффект кредитной выдачи',
-    businessLogic:'Выдача формирует процентный доход на остаток кредита и расходы на резервы. В первом месяце используется 50% новой выдачи как средний остаток. Далее остаток уменьшается по мере погашения. Маржа и уровень риска используются в годовом выражении и календаризуются по фактическому числу дней месяца.',
+    businessLogic:'Выдача формирует процентный доход на остаток кредита и расходы на резервы. В первом месяце используется 50% новой выдачи как средний остаток. Далее остаток уменьшается по мере погашения. Маржа и уровень риска используются в годовом выражении и календаризуются по фактическому числу дней месяца. Горизонт стоимости определяется сроком кредита: срок в годах переводится в месяцы, максимум 36 месяцев.',
     products:CREDIT_PRODUCTS,
     effectType:'Доходы',
     firstMonthBalanceFactor:0.5,
     plArticles:['Чистый процентный доход','Расходы на резервы'],
     links:[
-      {indicator:'Объём выдач', params:['Маржа, % годовых','Уровень риска, % годовых','Уровень погашения, % в месяц']},
-      {indicator:'Количество выдач', params:['Маржа, % годовых','Уровень риска, % годовых','Уровень погашения, % в месяц','Средний чек']}
+      {indicator:'Объём выдач', params:['Маржа, % годовых','Уровень риска, % годовых','Уровень погашения, % в месяц','Срок кредита, лет']},
+      {indicator:'Количество выдач', params:['Маржа, % годовых','Уровень риска, % годовых','Уровень погашения, % в месяц','Средний чек','Срок кредита, лет']}
     ]
   },
   insurance_income_v1: {
@@ -301,9 +301,14 @@ function daysInYear(year){ return ((year%4===0 && year%100!==0)||year%400===0)?3
 function sumAllocationProfiles(allocations, months){
   return Array.from({length:months},(_,i)=>String(Math.round((allocations||[]).reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0)*100)/100));
 }
+function creditHorizonMonths(p){
+  const years=moneyNumber(p?.creditTermYears);
+  if(!years) return Math.max(1,Math.min(36,Number(p?.horizon)||0));
+  return Math.max(1,Math.min(36,Math.round(years*12)));
+}
 function calculateCreditModel(c){
   const p=c.modelParams||{};
-  const months=Math.max(1,Math.min(36,Number(p.horizon)||0)); if(!months) return {profile:[],allocations:[]};
+  const months=creditHorizonMonths(p); if(!months) return {profile:[],allocations:[]};
   let balance=c.indicator==='Количество выдач' ? moneyNumber(c.base)*moneyNumber(p.avgCheck) : moneyNumber(c.base);
   const margin=moneyNumber(p.margin)/100, risk=moneyNumber(p.risk)/100, repayment=moneyNumber(p.repayment)/100;
   const nii=[], reserves=[]; const refYear=2027;
@@ -330,7 +335,7 @@ function modelLogic(c){
   const m=availableModel(c); const p=c.modelParams||{}; if(!m) return '';
   if(m.id==='insurance_income_v1') return `Объём сборов × коэффициент перевода ${p.conversion}% = чистый комиссионный доход. Эффект рассчитывается за 1 месяц без деления на 12 и календаризации.`;
   const baseText=c.indicator==='Количество выдач' ? `${baseLabel(c.base)} выдач × средний чек ${formatMoney(p.avgCheck)} ₽` : `${baseLabel(c.base)} объёма выдач`;
-  return `Расчёт на остаток кредитной выдачи: ${baseText}; В 1-м месяце используется 50% выдачи. Чистый процентный доход = остаток × маржа ${p.margin}% годовых × дни месяца / дни года. Расходы на резервы = −остаток × риск ${p.risk}% годовых × дни месяца / дни года. Остаток ежемесячно уменьшается на ${p.repayment}%; горизонт ${p.horizon} мес.`;
+  return `Расчёт на остаток кредитной выдачи: ${baseText}; В 1-м месяце используется 50% выдачи. Чистый процентный доход = остаток × маржа ${p.margin}% годовых × дни месяца / дни года. Расходы на резервы = −остаток × риск ${p.risk}% годовых × дни месяца / дни года. Остаток ежемесячно уменьшается на ${p.repayment}%; горизонт ${creditHorizonMonths(p)} мес.`;
 }
 function modelBusinessRationale(c){ const m=availableModel(c); return m?.businessLogic||''; }
 // Демо-набор v4: для модельных драйверов профиль и статьи рассчитываются той же моделью, что и для новых драйверов.
@@ -556,8 +561,8 @@ function rejectUnknownProduct(product) {
 }
 function defaultModelParams(c, model){
   if(model?.id==='credit_income_v2') return {
-    avgCheck: c.indicator==='Количество выдач'?'1000000':'', margin:'2', risk:'1', repayment:'3', horizon:36,
-    sources:{avgCheck:'Прогнозная модель',margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель'},
+    avgCheck: c.indicator==='Количество выдач'?'1000000':'', margin:'2', risk:'1', repayment:'3', creditTermYears:'3', horizon:36,
+    sources:{avgCheck:'Прогнозная модель',margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель'},
     sourcePeriod:'Среднее за последние 3 месяца прогнозного года'
   };
   if(model?.id==='insurance_income_v1') return {conversion:'50',horizon:1,sources:{conversion:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'};
@@ -628,7 +633,8 @@ function continueFlow() {
       if(p.risk===undefined || p.risk==='') return ask('modelRisk','Укажи уровень риска в процентах годовых.');
       if(p.repayment===undefined || p.repayment==='') return ask('modelRepayment','Укажи уровень погашения в процентах за месяц.');
     }
-    if(!p.horizon) return ask('modelHorizon','На какой горизонт рассчитать эффект? От 1 до 36 месяцев.',['12','24','36']);
+    if(!p.creditTermYears) return ask('modelCreditTerm','Укажи срок кредита в годах. Стоимость рассчитаю на срок кредита, но максимум на 36 месяцев.');
+    p.horizon=creditHorizonMonths(p);
     if(!(c.costProfile||[]).length){
       const result=calculateModel(c); const profile=result.profile;
       c.costProfile=profile; c.plAllocations=result.allocations; c.cost=String(profileTotal(profile)); c.costLogicText=modelLogic(c); c.businessRationale=modelBusinessRationale(c);
@@ -947,8 +953,9 @@ function openDriver(id){
   document.getElementById('editMargin').value=mp.margin||'';
   document.getElementById('editRisk').value=mp.risk||'';
   document.getElementById('editRepayment').value=mp.repayment||'';
+  document.getElementById('editCreditTermYears').value=mp.creditTermYears||'';
   document.getElementById('editConversion').value=mp.conversion||'';
-  document.getElementById('editHorizon').value=mp.horizon||((d.costProfile||[]).length||'');
+  document.getElementById('editHorizon').value=(d.modelId==='credit_income_v2'?creditHorizonMonths(mp):(mp.horizon||((d.costProfile||[]).length||'')));
   renderProfileEditor(d.costMode==='monthly'?(d.costProfile||[]):[]);
   renderPlAllocationEditor(d.plAllocations||[]);
   syncCostEditor();
@@ -1036,7 +1043,7 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
   const selectedUnit=document.getElementById('editUnit').value;
   const unit=selectedUnit==='other' ? document.getElementById('editUnitOther').value.trim() : selectedUnit;
   if(!unit){ toast('Укажи единицу измерения'); return; }
-  const modelParams=calcMethod==='model'?{...(d.modelParams||{}),avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),conversion:document.getElementById('editConversion').value.trim(),horizon:Number(document.getElementById('editHorizon').value||costProfile.length||0)}:null;
+  const modelParams=calcMethod==='model'?{...(d.modelParams||{}),avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),creditTermYears:document.getElementById('editCreditTermYears').value.trim(),conversion:document.getElementById('editConversion').value.trim(),horizon:Number(document.getElementById('editHorizon').value||costProfile.length||0)}:null;
   const updatedIndicator=document.getElementById('editIndicator').value.trim(), updatedProduct=document.getElementById('editProduct').value.trim(), updatedChannel=document.getElementById('editChannel').value.trim(), updatedSegment=document.getElementById('editSegment').value.trim();
   Object.assign(d,{name:buildDriverName({indicator:updatedIndicator,product:updatedProduct,channel:updatedChannel,segment:updatedSegment}),indicator:updatedIndicator,product:updatedProduct,effectType:document.getElementById('editEffectType').value,unit,channel:updatedChannel,segment:updatedSegment,base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?(availableModel({indicator:updatedIndicator,product:updatedProduct})?.id||d.modelId||''):'' ,modelParams,plAllocations:editedAllocations,incrementMode:document.getElementById('editIncrementMode').value,status});
   if(calcMethod==='model'){
@@ -1059,8 +1066,10 @@ function syncCostEditor(){
   document.getElementById('avgCheckWrap').hidden=!(model?.id==='credit_income_v2' && document.getElementById('editIndicator').value.trim()==='Количество выдач');
   document.getElementById('creditParamsWrap').hidden=model?.id!=='credit_income_v2';
   document.getElementById('conversionWrap').hidden=model?.id!=='insurance_income_v1';
-  const sourceNote=document.getElementById('modelSourceNote'); if(sourceNote && isModel) sourceNote.textContent='Источник: прогнозная модель · среднее за последние 3 месяца прогнозного года. При необходимости исходные значения можно скорректировать.';
-  if(document.getElementById('editHorizon')) document.getElementById('editHorizon').readOnly=isModel;
+  const sourceNote=document.getElementById('modelSourceNote'); if(sourceNote && isModel) sourceNote.textContent='Источник: прогнозная модель · среднее за последние 3 месяца прогнозного года.';
+  if(document.getElementById('editHorizon')) document.getElementById('editHorizon').readOnly=true;
+  const sourceLocked = isModel && !!(document.getElementById('editId')?.value && drivers.find(x=>x.id===document.getElementById('editId').value)?.modelParams?.sources);
+  ['editAvgCheck','editMargin','editRisk','editRepayment','editCreditTermYears','editConversion'].forEach(id=>{ const x=document.getElementById(id); if(x) x.readOnly=sourceLocked; });
   const business=document.getElementById('businessLogicSection'); if(business) business.hidden=isModel;
   const modelLink=document.getElementById('detailModelLink'); if(modelLink){ modelLink.hidden=!isModel; modelLink.dataset.openModel=model?.id||''; modelLink.textContent=model?`Открыть модель «${model.title}»`:'Открыть модель'; }
   // В модельном драйвере методика и аналитика фиксированы: пользователь корректирует только исходные значения модели.
@@ -1069,6 +1078,10 @@ function syncCostEditor(){
   updateProfileTotal();
 }
 document.getElementById('editCalcMethod').addEventListener('change',syncCostEditor);
+document.getElementById('editCreditTermYears')?.addEventListener('input',()=>{
+  const term=moneyNumber(document.getElementById('editCreditTermYears').value);
+  document.getElementById('editHorizon').value=term?Math.min(36,Math.round(term*12)):'';
+});
 document.getElementById('addPlArticle').addEventListener('click',()=>{ const current=getPlAllocationsFromEditor(); const months=Math.max(1,getProfileFromEditor().length); current.push({article:'',profile:Array(months).fill('0')}); renderPlAllocationEditor(current); });
 document.getElementById('editPlAllocations').addEventListener('input',updatePlSummary);
 
@@ -1081,7 +1094,8 @@ document.getElementById('toggleProfileRows').addEventListener('click',()=>{
 });
 document.getElementById('recalcModel').addEventListener('click',()=>{
   const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
-  const temp={indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),base:document.getElementById('editBase').value,modelParams:{avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),conversion:document.getElementById('editConversion').value.trim(),horizon:Number(document.getElementById('editHorizon').value||0)}};
+  const temp={indicator:document.getElementById('editIndicator').value.trim(),product:document.getElementById('editProduct').value.trim(),base:document.getElementById('editBase').value,modelParams:{avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),creditTermYears:document.getElementById('editCreditTermYears').value.trim(),conversion:document.getElementById('editConversion').value.trim(),horizon:Number(document.getElementById('editHorizon').value||0)}};
+  if(temp.modelParams.creditTermYears) temp.modelParams.horizon=creditHorizonMonths(temp.modelParams);
   const result=calculateModel(temp); const p=result.profile; if(!p.length){toast('Заполни параметры модели');return;}
   renderProfileEditor(p); renderPlAllocationEditor(result.allocations); document.getElementById('editCostLogic').value=modelLogic(temp); document.getElementById('editBusinessRationale').value=modelBusinessRationale(temp); toast('Профиль пересчитан');
 });
@@ -1166,3 +1180,9 @@ document.getElementById('logoutButton')?.addEventListener('click',()=>{
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));
 function renderAll(){renderMessages();renderContextActions();renderProgress();renderRegistry();renderModels();renderDictionaries();renderLlmSettings();updateSummary();}
 if(authStillValid()){ hideAuthGate(); renderAll(); } else { clearAuth(); showAuthGate(''); }
+
+function openSettingsModal(){ const m=document.getElementById('settingsModal'); if(m){m.hidden=false;document.body.classList.add('modal-open');} }
+function closeSettingsModal(){ const m=document.getElementById('settingsModal'); if(m){m.hidden=true;document.body.classList.remove('modal-open');} }
+document.getElementById('settingsGear')?.addEventListener('click',openSettingsModal);
+document.getElementById('closeSettings')?.addEventListener('click',closeSettingsModal);
+document.querySelector('[data-close-settings]')?.addEventListener('click',closeSettingsModal);

@@ -147,3 +147,32 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
   .indicator-table td,.indicator-table th{padding-left:8px;padding-right:8px}
   .indicator-table .table-status{font-size:8px;padding:4px 6px}
 }
+
+/* v4.5 */
+.top-actions{display:flex;align-items:center;gap:8px}
+.settings-gear{width:36px;height:36px;border:1px solid #3e4f85;background:#162044;color:#c8d1ef;border-radius:11px;font-size:18px;display:grid;place-items:center;padding:0}
+.driver-row strong,.driver-row .driver-name,.detail-title h2,#editName{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;overflow-wrap:anywhere;word-break:normal}
+.driver-row>span:first-child{min-width:0}
+.detail-title>div{min-width:0;flex:1}
+.pl-dict-wrap{overflow-x:hidden}
+.pl-dict-table{min-width:0;table-layout:fixed;width:100%}
+.pl-dict-table th:first-child,.pl-dict-table td:first-child{width:68%;overflow-wrap:anywhere}
+.pl-dict-table th:last-child,.pl-dict-table td:last-child{width:32%;text-align:right;white-space:nowrap}
+.settings-modal[hidden]{display:none}
+.settings-modal{position:fixed;inset:0;z-index:50;display:flex;align-items:flex-end;justify-content:center}
+.settings-backdrop{position:absolute;inset:0;background:rgba(0,0,0,.58);backdrop-filter:blur(5px)}
+.settings-sheet{position:relative;width:min(100%,560px);background:#10182b;border:1px solid #29365f;border-radius:22px 22px 0 0;padding:18px 16px max(20px,env(safe-area-inset-bottom));box-shadow:0 -24px 60px rgba(0,0,0,.4)}
+.settings-sheet-head{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px}
+.settings-sheet-head h2{margin:4px 0 0;font-size:22px}
+.icon-close{width:36px;height:36px;border:1px solid #2d3a63;background:#151f37;color:#d6dcf0;border-radius:11px;font-size:22px}
+.settings-block{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px 0;border-top:1px solid #222e4e}
+.settings-block strong{font-size:13px}.settings-block p{margin:4px 0 0;color:#7f8aa8;font-size:11px;line-height:1.4}
+.modal-open{overflow:hidden}
+@media(max-width:430px){
+  .driver-row{align-items:flex-start}
+  .driver-row strong{font-size:13px;line-height:1.28}
+  .detail-title h2{font-size:20px;line-height:1.22}
+  .pl-dict-table td,.pl-dict-table th{padding-left:8px;padding-right:8px}
+  .pl-dict-table td{font-size:11px}
+  .pl-dict-table .table-status{font-size:8px;padding:4px 6px}
+}

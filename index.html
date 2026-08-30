@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=6.0" />
+  <link rel="stylesheet" href="styles.css?v=6.1" />
   <title>Driver Agent</title>
 </head>
 <body class="auth-pending">
@@ -40,7 +40,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <div class="top-actions"><span class="version-pill">v6.0</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
+      <div class="top-actions"><span class="version-pill">v6.1</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
     </header>
 
     <section class="summary-card">
@@ -96,6 +96,11 @@
             <div class="form-grid analytics-grid">
               <label id="editChannelWrap">Канал<input id="editChannel" placeholder="Например: мобильный банк" /></label>
               <label id="editSegmentWrap">Сегмент<input id="editSegment" placeholder="Например: массовый" /></label>
+            </div>
+            <div class="combination-summary">
+              <span>Комбинация аналитик</span>
+              <strong id="editCombinationName">—</strong>
+              <small id="editCombinationComposition">—</small>
             </div>
           </div>
           <div class="form-section">
@@ -200,6 +205,10 @@
         <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="segmentDict"></tbody></table></div>
       </div>
       <div class="table-card">
+        <div class="table-title"><h3>Комбинации аналитик</h3><span id="combinationCount"></span></div>
+        <div class="table-wrap combination-dict-wrap"><table class="combination-dict-table"><thead><tr><th>Комбинация</th><th>Состав</th><th>Статус</th></tr></thead><tbody id="combinationDict"></tbody></table></div>
+      </div>
+      <div class="table-card">
         <div class="table-title"><h3>Статьи P&amp;L</h3><span id="plArticleCount"></span></div>
         <div class="table-wrap pl-dict-wrap"><table class="pl-dict-table"><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="plArticleDict"></tbody></table></div>
       </div>
@@ -238,6 +247,6 @@
   </div>
 
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="app.js?v=6.0"></script>
+  <script src="app.js?v=6.1"></script>
 </body>
 </html>

@@ -201,3 +201,13 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
 .message.result-message,.message.preview-message{max-width:96%}
 .scale-test-result{margin-top:8px;font-size:12px;line-height:1.45;color:var(--muted,#667085)}
 .scale-test-result strong{color:inherit}
+
+
+/* v6.1: separate analytics combination entity */
+.combination-summary{border:1px solid rgba(112,132,180,.35);background:rgba(10,18,35,.42);border-radius:18px;padding:14px 16px;margin-top:12px;display:flex;flex-direction:column;gap:5px}
+.combination-summary span{color:#91a0c2;text-transform:uppercase;letter-spacing:.12em;font-size:.72rem;font-weight:800}
+.combination-summary strong{font-size:1.02rem;color:#f8fbff;line-height:1.25}
+.combination-summary small{color:#a5b1cf;line-height:1.35}
+.combination-dict-table td:first-child small{display:block;color:#8d9abd;font-size:.74rem;margin-top:4px}
+.combination-dict-table th:nth-child(2),.combination-dict-table td:nth-child(2){min-width:180px}
+@media(max-width:520px){.combination-dict-table th:nth-child(2),.combination-dict-table td:nth-child(2){font-size:.78rem;min-width:130px}.combination-summary{padding:12px}}

@@ -2,6 +2,7 @@ const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
 const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.9';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
+const COMBINATION_REGISTRY_KEY = 'driver-agent.pwa.combinations.v1';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
 const INDICATOR_REGISTRY_KEY = 'driver-agent.pwa.indicators.v1';
 const LLM_MODEL = 'openrouter/free';
@@ -341,6 +342,7 @@ const seedMessages = [{
 }];
 
 let drivers = load(REGISTRY_KEY, seedDrivers);
+let combinationRegistry = load(COMBINATION_REGISTRY_KEY, buildSeedCombinations(seedDrivers));
 let messages = load(MESSAGES_KEY, seedMessages);
 let flow = load(FLOW_KEY, null);
 let expandedDriverId = null;
@@ -367,7 +369,7 @@ drivers = drivers.map(d => ({
   incrementMode: d.incrementMode || inferIncrementMode({indicator:d.indicator,unit:d.unit}),
   plAllocations: Array.isArray(d.plAllocations) ? d.plAllocations : ((d.costProfile||[]).length ? [{article: d.effectType==='Расходы'?'Прочие расходы':'Прочие доходы', profile: d.costProfile}] : []),
   status: d.status === 'Готов' && !String(d.cost || '').trim() && !(Array.isArray(d.costProfile)&&d.costProfile.length) ? 'Черновик' : d.status
-}));
+})).map(syncDriverCombination);
 function normalizeStoredBase(base){
   const s=String(base||'').toLowerCase().replace(/\s/g,'');
   if(!s) return '';
@@ -391,6 +393,7 @@ function save() {
   localStorage.setItem(MESSAGES_KEY, JSON.stringify(messages));
   localStorage.setItem(FLOW_KEY, JSON.stringify(flow));
   localStorage.setItem(INDICATOR_REGISTRY_KEY, JSON.stringify(indicatorRegistry));
+  localStorage.setItem(COMBINATION_REGISTRY_KEY, JSON.stringify(combinationRegistry));
 }
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
@@ -487,8 +490,71 @@ function unitFor(indicator) {
 }
 function analyticsKey(v){ return normalizeText(v||''); }
 function buildDriverName(d){ return [d?.indicator,d?.product,d?.channel,d?.segment].map(x=>String(x||'').trim()).filter(Boolean).join(' '); }
+function combinationKeyFromParts(product='', channel='', segment=''){
+  return [analyticsKey(product), analyticsKey(channel), analyticsKey(segment)].join('|');
+}
+function combinationKeyOf(value={}){
+  if(value.combinationId){
+    const combo=combinationRegistry?.find?.(x=>x.id===value.combinationId);
+    if(combo) return combo.key;
+  }
+  return combinationKeyFromParts(value.product, value.channel, value.segment);
+}
+function combinationNameFromParts(product='', channel='', segment=''){
+  return [product, channel, segment].map(x=>String(x||'').trim()).filter(Boolean).join(' ') || 'Комбинация без аналитик';
+}
+function combinationComposition(combo){
+  const parts=[];
+  if(combo?.product) parts.push(`Продукт: ${combo.product}`);
+  if(combo?.channel) parts.push(`Канал: ${combo.channel}`);
+  if(combo?.segment) parts.push(`Сегмент: ${combo.segment}`);
+  return parts.join(' · ') || '—';
+}
+function combinationType(combo){
+  const flags=[combo?.product?'Продукт':'',combo?.channel?'Канал':'',combo?.segment?'Сегмент':''].filter(Boolean);
+  return flags.join(' + ') || '—';
+}
+function makeCombination(value={}, preferredId=''){
+  const product=String(value.product||'').trim();
+  const channel=String(value.channel||'').trim();
+  const segment=String(value.segment||'').trim();
+  const key=combinationKeyFromParts(product,channel,segment);
+  return {id:preferredId||`combo-${Math.abs(hashString(key))}`, key, name:combinationNameFromParts(product,channel,segment), product, channel, segment, type:'analytics', status:'Активна'};
+}
+function hashString(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
+function buildSeedCombinations(sourceDrivers=[]){
+  const map=new Map();
+  for(const d of sourceDrivers){
+    if(!d.product) continue;
+    const combo=makeCombination(d, d.combinationId||'');
+    if(!map.has(combo.key)) map.set(combo.key, combo);
+  }
+  // Несколько явных примеров разных уровней аналитичности для демонстрации справочника комбинаций.
+  [
+    {product:'Ипотечное кредитование'},
+    {product:'Потребительский кредит', channel:'Онлайн'},
+    {product:'Потребительский кредит', segment:'Массовый'},
+    {product:'Дебетовые карты', channel:'Мобильное приложение', segment:'Массовый'},
+    {product:'ОСАГО'},
+    {product:'КАСКО', channel:'Онлайн'}
+  ].forEach(x=>{ const c=makeCombination(x); if(!map.has(c.key)) map.set(c.key,c); });
+  return [...map.values()];
+}
+function ensureCombination(value={}){
+  if(!value.product) return null;
+  const key=combinationKeyFromParts(value.product,value.channel,value.segment);
+  let combo=combinationRegistry.find(x=>x.key===key);
+  if(!combo){ combo=makeCombination(value); combinationRegistry.push(combo); }
+  return combo;
+}
+function syncDriverCombination(d){
+  const combo=ensureCombination(d);
+  if(combo){ d.combinationId=combo.id; d.combinationName=combo.name; }
+  return d;
+}
 function exactDuplicate(c, excludeId='') {
-  return drivers.find(d => d.id!==excludeId && analyticsKey(d.indicator)===analyticsKey(c.indicator) && analyticsKey(d.product)===analyticsKey(c.product) && analyticsKey(d.channel)===analyticsKey(c.channel) && analyticsKey(d.segment)===analyticsKey(c.segment));
+  const key=combinationKeyOf(c);
+  return drivers.find(d => d.id!==excludeId && analyticsKey(d.indicator)===analyticsKey(c.indicator) && combinationKeyOf(d)===key);
 }
 function inferIncrementMode(c){
   const name=normalizeText(c?.indicator);
@@ -1193,7 +1259,8 @@ function finalizeDriver() {
   let indicator=indicatorRecord(c.indicator);
   if(!indicator){ indicator={name:c.indicator,unit:c.unit,status:'Подготовлен'}; indicatorRegistry.push(indicator); }
   const needsApproval = indicator.status==='Подготовлен';
-  const driver={ id:String(Date.now()), name:buildDriverName(c), indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', calcMethod:c.calcMethod||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', modelId:c.modelId||'', modelParams:c.modelParams||null, plAllocations:c.plAllocations||[], incrementMode:c.incrementMode||inferIncrementMode(c), channel:c.channel||'', segment:c.segment||'', status:needsApproval?'На согласовании':'Готов' };
+  const combo=ensureCombination(c);
+  const driver={ id:String(Date.now()), name:buildDriverName(c), indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', calcMethod:c.calcMethod||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', modelId:c.modelId||'', modelParams:c.modelParams||null, plAllocations:c.plAllocations||[], incrementMode:c.incrementMode||inferIncrementMode(c), channel:c.channel||'', segment:c.segment||'', combinationId:combo?.id||'', combinationName:combo?.name||'', status:needsApproval?'На согласовании':'Готов' };
   drivers.unshift(driver); flow=null; lastCreatedDriverId=driver.id; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress();
   addMessage('agent', needsApproval ? `Готово. «${driver.name}» создан и направлен на согласование. После согласования он станет доступен для использования.` : `Готово. «${driver.name}» создан со статусом «Готов».`);
   renderContextActions();
@@ -1298,11 +1365,13 @@ function renderDictionaries(){
   document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
   const ch=document.getElementById('channelDict'); if(ch) ch.innerHTML=CORE_CHANNELS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
   const sg=document.getElementById('segmentDict'); if(sg) sg.innerHTML=CORE_SEGMENTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  const combo=document.getElementById('combinationDict'); if(combo) combo.innerHTML=combinationRegistry.map(x=>`<tr><td><strong>${escapeHtml(x.name)}</strong><small>${escapeHtml(combinationType(x))}</small></td><td>${escapeHtml(combinationComposition(x))}</td><td><span class="table-status">${escapeHtml(x.status||'Активна')}</span></td></tr>`).join('');
   const pl=document.getElementById('plArticleDict'); if(pl) pl.innerHTML=PL_ARTICLES.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активна</span></td></tr>`).join('');
   document.getElementById('indicatorCount').textContent=`${indicatorRegistry.length} записей`;
   document.getElementById('productCount').textContent=`${PRODUCTS.length} записей`;
   const cc=document.getElementById('channelCount'); if(cc) cc.textContent=`${CORE_CHANNELS.length} записей`;
   const sc=document.getElementById('segmentCount'); if(sc) sc.textContent=`${CORE_SEGMENTS.length} записей`;
+  const coc=document.getElementById('combinationCount'); if(coc) coc.textContent=`${combinationRegistry.length} записей`;
   const pc=document.getElementById('plArticleCount'); if(pc) pc.textContent=`${PL_ARTICLES.length} записей`;
 }
 function switchTab(name){
@@ -1371,6 +1440,9 @@ function openDriver(id){
   if(sourceSelect) sourceSelect.value=(d.calcMethod==='model' && d.modelParams?.sources)?'forecast':'manual';
   document.getElementById('editChannelWrap').hidden=!d.channel;
   document.getElementById('editSegmentWrap').hidden=!d.segment;
+  const combo=ensureCombination(d);
+  const comboName=document.getElementById('editCombinationName'); if(comboName) comboName.textContent=combo?.name||'—';
+  const comboBody=document.getElementById('editCombinationComposition'); if(comboBody) comboBody.textContent=combo?combinationComposition(combo):'—';
   document.getElementById('editCost').value=d.costMode==='single'?(d.cost||''):'';
   document.getElementById('editCostLogic').value=d.costLogicText||'';
   document.getElementById('editBusinessRationale').value=d.businessRationale||'';
@@ -1488,7 +1560,8 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
   const modelSource=document.getElementById('editModelSource')?.value||'forecast';
   const modelParams=calcMethod==='model'?{avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),creditTermYears:document.getElementById('editCreditTermYears').value.trim(),conversion:document.getElementById('editConversion').value.trim(),horizon:Number(document.getElementById('editHorizon').value||0),sources:modelSource==='forecast'?{avgCheck:'Прогнозная модель',margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель',conversion:'Прогнозная модель'}:null,sourcePeriod:modelSource==='forecast'?'Среднее за последние 3 месяца прогнозного года':''}:null;
   const updatedIndicator=document.getElementById('editIndicator').value.trim(), updatedProduct=document.getElementById('editProduct').value.trim(), updatedChannel=document.getElementById('editChannel').value.trim(), updatedSegment=document.getElementById('editSegment').value.trim();
-  Object.assign(d,{name:buildDriverName({indicator:updatedIndicator,product:updatedProduct,channel:updatedChannel,segment:updatedSegment}),indicator:updatedIndicator,product:updatedProduct,effectType:document.getElementById('editEffectType').value,unit,channel:updatedChannel,segment:updatedSegment,base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?(availableModel({indicator:updatedIndicator,product:updatedProduct})?.id||d.modelId||''):'' ,modelParams,plAllocations:editedAllocations,incrementMode:document.getElementById('editIncrementMode').value,status});
+  const updatedCombo=ensureCombination({product:updatedProduct,channel:updatedChannel,segment:updatedSegment});
+  Object.assign(d,{name:buildDriverName({indicator:updatedIndicator,product:updatedProduct,channel:updatedChannel,segment:updatedSegment}),indicator:updatedIndicator,product:updatedProduct,effectType:document.getElementById('editEffectType').value,unit,channel:updatedChannel,segment:updatedSegment,combinationId:updatedCombo?.id||'',combinationName:updatedCombo?.name||'',base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?(availableModel({indicator:updatedIndicator,product:updatedProduct})?.id||d.modelId||''):'' ,modelParams,plAllocations:editedAllocations,incrementMode:document.getElementById('editIncrementMode').value,status});
   if(calcMethod==='model'){
     const result=calculateModel(d); if(result.profile.length){ d.costProfile=result.profile; d.plAllocations=result.allocations; d.cost=String(profileTotal(result.profile)); d.costMode=result.profile.length>1?'monthly':'single'; }
   }

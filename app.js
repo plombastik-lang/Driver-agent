@@ -289,6 +289,10 @@ function runScaleBenchmark(){
   };
 }
 const PL_ARTICLES = ['Чистый процентный доход','Расходы на резервы','Чистый комиссионный доход','Операционные доходы','Прочие доходы','Прочие расходы'];
+const INCOME_PL_ARTICLES = ['Чистый процентный доход','Чистый комиссионный доход','Операционные доходы','Прочие доходы'];
+const EXPENSE_PL_ARTICLES = ['Расходы на резервы','Прочие расходы'];
+function allowedPlArticles(effectType){ return effectType==='Расходы' ? EXPENSE_PL_ARTICLES : INCOME_PL_ARTICLES; }
+function plArticleMatchesEffect(article,effectType){ return allowedPlArticles(effectType).includes(article); }
 
 const seedDrivers = [
   {
@@ -603,6 +607,29 @@ function inferEffectType(c){
   if(/выдач|продаж|клиент|оборот|сбор|доля рынка|проникнов|конверс|выруч|доход/.test(t)) return {value:'Доходы',confidence:.9};
   return {value:null,confidence:0};
 }
+function expenseIndicatorName(name){
+  const raw=String(name||'').trim();
+  const t=normalizeText(raw);
+  if(!raw || /^(сокращение|снижение|экономия)/.test(t)) return raw;
+  // Не переименовываем показатели, для которых «сокращение» обычно меняет бизнес-смысл.
+  if(/продаж|выдач|сбор|выруч|доход|доля рынка|проникнов|конверс/.test(t)) return null;
+  const quantity=raw.match(/^Количество\s+(.+)$/i);
+  if(quantity) return `Сокращение количества ${quantity[1].toLowerCase()}`;
+  const volume=raw.match(/^Объ[её]м\s+(.+)$/i);
+  if(volume) return `Снижение объёма ${volume[1].toLowerCase()}`;
+  if(/операц|транзакц|обращен|пше|затрат|расход/.test(t)) return `Сокращение ${raw.charAt(0).toLowerCase()+raw.slice(1)}`;
+  return null;
+}
+function normalizeExpenseIndicator(c){
+  if(!c || c.effectType!=='Расходы') return {ok:true,changed:false};
+  const next=expenseIndicatorName(c.indicator);
+  if(!next) return {ok:false,changed:false};
+  if(normalizeText(next)===normalizeText(c.indicator)) return {ok:true,changed:false};
+  const previous=c.indicator; c.indicator=next; c.newIndicator=true; c.newIndicatorPrepared=true;
+  if(!c.unit) c.unit=inferUnitForNewIndicator(next);
+  if(!indicatorRegistry.some(x=>normalizeText(x.name)===normalizeText(next))) indicatorRegistry.push({name:next,unit:c.unit,status:'Подготовлен'});
+  return {ok:true,changed:true,previous,next};
+}
 function defaultBaseForCandidate(c){
   if(c?.unit==='шт.') return '1';
   if(c?.unit==='₽') return '1000000';
@@ -624,24 +651,22 @@ function parsePlArticles(text){
   return found;
 }
 function relevantPlArticles(c){
+  const allowed=allowedPlArticles(c?.effectType);
   const counts=new Map();
   for(const d of drivers){
     if(!c?.product || d.product!==c.product) continue;
-    for(const a of (d.plAllocations||[])) counts.set(a.article,(counts.get(a.article)||0)+1);
+    for(const a of (d.plAllocations||[])) if(allowed.includes(a.article)) counts.set(a.article,(counts.get(a.article)||0)+1);
   }
-  let ranked=[...counts.entries()].sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
-  const income=['Чистый процентный доход','Чистый комиссионный доход','Операционные доходы','Прочие доходы'];
-  const expense=['Расходы на резервы','Прочие расходы'];
-  const fallback=c?.effectType==='Расходы'?expense:income;
-  for(const a of fallback) if(!ranked.includes(a)) ranked.push(a);
+  const ranked=[...counts.entries()].sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+  for(const a of allowed) if(!ranked.includes(a)) ranked.push(a);
   return ranked.slice(0,4);
 }
 function plCandidateCatalog(c){
   const relevant=relevantPlArticles(c);
-  return [...relevant,...PL_ARTICLES.filter(x=>!relevant.includes(x))];
+  return [...relevant,...allowedPlArticles(c?.effectType).filter(x=>!relevant.includes(x))];
 }
 async function interpretPlArticles(text,c){
-  const local=parsePlArticles(text);
+  const local=parsePlArticles(text).filter(a=>plArticleMatchesEffect(a,c?.effectType));
   if(local.length) return local;
   const candidates=plCandidateCatalog(c);
   const system=`Ты помогаешь выбрать статьи P&L для финансового драйвера. Пользователь может назвать сокращения, разговорные названия или описать смысл. Выбирай ТОЛЬКО из переданного списка кандидатов. Верни ТОЛЬКО JSON вида {"articles":["точное название"]}. Можно вернуть несколько статей. Если уверенности нет — пустой массив. Не придумывай новые статьи.`;
@@ -652,12 +677,12 @@ async function interpretPlArticles(text,c){
   const content=payload?.choices?.[0]?.message?.content; if(!content) throw new Error('pl');
   const data=JSON.parse(cleanJsonText(content));
   const list=Array.isArray(data?.articles)?data.articles:[];
-  return list.map(x=>PL_ARTICLES.find(a=>normalizeText(a)===normalizeText(x))).filter(Boolean);
+  return list.map(x=>PL_ARTICLES.find(a=>normalizeText(a)===normalizeText(x))).filter(a=>a && plArticleMatchesEffect(a,c?.effectType));
 }
 function applySelectedPlArticles(articles){
   if(!flow) return;
   const c=flow.candidate;
-  const uniq=[...new Set((articles||[]).filter(a=>PL_ARTICLES.includes(a)))];
+  const uniq=[...new Set((articles||[]).filter(a=>PL_ARTICLES.includes(a) && plArticleMatchesEffect(a,c.effectType)))];
   if(!uniq.length) return false;
   c.pendingPlArticles=uniq;
   if(uniq.length===1){ c.plAllocations=[{article:uniq[0],profile:[...(c.costProfile||[])]}]; c.plSplitDone=true; }
@@ -1322,6 +1347,15 @@ function continueFlow() {
     if(inferred.confidence>=.85){ c.effectType=inferred.value; save(); }
     else return ask('effectType', 'Не уверен, как эффект влияет на финансовый результат. Это доходы или расходы?', ['Доходы','Расходы']);
   }
+  if(c.effectType==='Расходы' && !c.expenseIndicatorChecked){
+    const norm=normalizeExpenseIndicator(c);
+    if(!norm.ok){
+      c.expenseIndicatorChecked=true; save();
+      return ask('expenseIndicatorMeaning', `Для расходного эффекта показатель «${c.indicator}» выглядит неоднозначно. Что именно сокращаем или снижаем? Напиши показатель, например «сокращение количества операций».`);
+    }
+    c.expenseIndicatorChecked=true; save();
+    if(norm.changed) addMessage('agent', `Для расходного эффекта нормализовал показатель: «${norm.previous}» → «${norm.next}».`);
+  }
 
   if(!c.calcMethod && model){
     flow.step='modelChoice'; flow.modelId=model.id; save();
@@ -1387,7 +1421,8 @@ function handleFlowAnswer(text) {
   else if (flow.step === 'unit') { if(text.trim()==='Другое') return ask('unitCustom','Напиши единицу измерения нового показателя.'); c.unit=text.trim(); }
   else if (flow.step === 'unitCustom') c.unit=text.trim();
   else if (flow.step === 'product') { const pd=productDecision(text); if(pd.status==='auto') c.product=pd.value; else if(pd.status==='clarify'){ c.product=null; c.productChoices=pd.candidates.map(x=>x.entity.name); c.productGroup='ambiguous'; } else c.product=text.trim(); if(c.product){c.productGroup=''; c.productChoices=null;} }
-  else if (flow.step === 'effectType') c.effectType = normalizeEffect(text);
+  else if (flow.step === 'effectType') { c.effectType = normalizeEffect(text); c.expenseIndicatorChecked=false; }
+  else if (flow.step === 'expenseIndicatorMeaning') { c.indicator=String(text).trim(); c.newIndicator=true; c.newIndicatorPrepared=true; c.expenseIndicatorChecked=false; }
   else if (flow.step === 'channel') c.channel = text.trim();
   else if (flow.step === 'segment') c.segment = text.trim();
   else if (flow.step === 'base') c.base = normalizeBaseAnswer(text);
@@ -1456,8 +1491,11 @@ ${compactProfileLines(calculated)}
     })(); return;
   }
   else if(flow.step==='plArticles'){
-    const local=parsePlArticles(text);
+    const recognized=parsePlArticles(text);
+    const local=recognized.filter(a=>plArticleMatchesEffect(a,c.effectType));
+    const rejected=recognized.filter(a=>!plArticleMatchesEffect(a,c.effectType));
     if(local.length){ applySelectedPlArticles(local); return; }
+    if(rejected.length){ addMessage('agent', `Для типа эффекта «${c.effectType}» эти статьи не подходят: ${rejected.join(', ')}. Показываю только ${c.effectType==='Расходы'?'расходные':'доходные'} статьи.`); renderContextActions(); return; }
     flow.step='plParsing'; save(); addMessage('agent','Понял. Подбираю статьи…');
     (async()=>{
       let articles=[]; try{ articles=await interpretPlArticles(text,c); }catch{}
@@ -1703,7 +1741,9 @@ function renderProfileEditor(profile=[]){
   updateProfileTotal();
 }
 function plArticleOptions(selected=''){
-  const values=selected && !PL_ARTICLES.includes(selected)?[selected,...PL_ARTICLES]:PL_ARTICLES;
+  const effectType=document.getElementById('editEffectType')?.value || staticDriver?.effectType || 'Доходы';
+  const allowed=allowedPlArticles(effectType);
+  const values=selected && !allowed.includes(selected)?[selected,...allowed]:allowed;
   return `<option value="">Выбери статью</option>${values.map(x=>`<option value="${escapeHtml(x)}" ${x===selected?'selected':''}>${escapeHtml(x)}</option>`).join('')}`;
 }
 function normalizedAllocationsForMonths(allocations=[],months=1){
@@ -1933,9 +1973,17 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
   if(!unit){ toast('Укажи единицу измерения'); return; }
   const modelSource=document.getElementById('editModelSource')?.value||'forecast';
   const modelParams=calcMethod==='model'?{avgCheck:document.getElementById('editAvgCheck').value.trim(),margin:document.getElementById('editMargin').value.trim(),risk:document.getElementById('editRisk').value.trim(),repayment:document.getElementById('editRepayment').value.trim(),creditTermYears:document.getElementById('editCreditTermYears').value.trim(),conversion:document.getElementById('editConversion').value.trim(),horizon:Number(document.getElementById('editHorizon').value||0),sources:modelSource==='forecast'?{avgCheck:'Прогнозная модель',margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель',conversion:'Прогнозная модель'}:null,sourcePeriod:modelSource==='forecast'?'Среднее за последние 3 месяца прогнозного года':''}:null;
-  const updatedIndicator=document.getElementById('editIndicator').value.trim(), updatedProduct=document.getElementById('editProduct').value.trim(), updatedChannel=document.getElementById('editChannel').value.trim(), updatedSegment=document.getElementById('editSegment').value.trim();
+  let updatedIndicator=document.getElementById('editIndicator').value.trim(); const updatedProduct=document.getElementById('editProduct').value.trim(), updatedChannel=document.getElementById('editChannel').value.trim(), updatedSegment=document.getElementById('editSegment').value.trim();
+  const updatedEffectType=document.getElementById('editEffectType').value;
+  if(calcMethod!=='model' && editedAllocations.some(a=>!plArticleMatchesEffect(a.article,updatedEffectType))){ toast(`Для типа эффекта «${updatedEffectType}» выбраны неподходящие статьи P&L`); return; }
+  if(updatedEffectType==='Расходы'){
+    const normalized=expenseIndicatorName(updatedIndicator);
+    if(!normalized){ toast('Для расходного эффекта укажи показатель как сокращение или снижение'); return; }
+    updatedIndicator=normalized;
+    if(!indicatorRegistry.some(x=>normalizeText(x.name)===normalizeText(normalized))) indicatorRegistry.push({name:normalized,unit,status:'Подготовлен'});
+  }
   const updatedCombo=ensureCombination({product:updatedProduct,channel:updatedChannel,segment:updatedSegment});
-  Object.assign(d,{name:buildDriverName({indicator:updatedIndicator,product:updatedProduct,channel:updatedChannel,segment:updatedSegment}),indicator:updatedIndicator,product:updatedProduct,effectType:document.getElementById('editEffectType').value,unit,channel:updatedChannel,segment:updatedSegment,combinationId:updatedCombo?.id||'',combinationName:updatedCombo?.name||'',base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?(availableModel({indicator:updatedIndicator,product:updatedProduct})?.id||d.modelId||''):'' ,modelParams,plAllocations:editedAllocations,incrementMode:document.getElementById('editIncrementMode').value,status});
+  Object.assign(d,{name:buildDriverName({indicator:updatedIndicator,product:updatedProduct,channel:updatedChannel,segment:updatedSegment}),indicator:updatedIndicator,product:updatedProduct,effectType:updatedEffectType,unit,channel:updatedChannel,segment:updatedSegment,combinationId:updatedCombo?.id||'',combinationName:updatedCombo?.name||'',base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?(availableModel({indicator:updatedIndicator,product:updatedProduct})?.id||d.modelId||''):'' ,modelParams,plAllocations:editedAllocations,incrementMode:document.getElementById('editIncrementMode').value,status});
   if(calcMethod==='model'){
     const result=calculateModel(d); if(result.profile.length){ d.costProfile=result.profile; d.plAllocations=result.allocations; d.cost=String(profileTotal(result.profile)); d.costMode=result.profile.length>1?'monthly':'single'; }
   }

@@ -809,6 +809,13 @@ async function callOpenRouter(userText, candidate={}, expectedStep='', signal=nu
 
 Если пользователь отвечает на уточняющий вопрос короткой фразой, учитывай поле «Ожидаемое поле». Не придумывай отсутствующие значения. Не исправляй «карты» на «Дебетовые карты» или «обороты» на справочное название — верни смысл максимально близко к словам пользователя. Единицу измерения не определяй.
 
+Критически важно не путать роли сущностей. В конструкции «X по Y» X обычно отвечает на вопрос «что измеряем?» (indicator), а Y — «по какому продукту/аналитике?» (product), если контекст не говорит обратного. Примеры:
+- «создай драйвер обороты по картам» → indicator=«обороты», product=«карты»;
+- «количество клиентов по ипотеке» → indicator=«количество клиентов», product=«ипотека»;
+- «объём сборов ОСАГО» → indicator=«объём сборов», product=«ОСАГО»;
+- «драйвер для карандашей» → indicator=null, product=«карандаши»;
+- «продажи по картам онлайн массовый» → indicator=«продажи», product=«карты», channel=«онлайн», segment=«массовый».
+
 Верни ТОЛЬКО JSON без markdown с ключами: indicator, product, effectType, base, cost, channel, segment. Для неизвестных полей null.`;
   const current=JSON.stringify(candidate||{});
   const response=await fetch(LLM_API_URL,{
@@ -836,6 +843,54 @@ function coreCatalogDecision(query, names, aliases={}, autoThreshold=0.88, clari
   if(top.score>=clarifyThreshold) return {status:'clarify',confidence:top.score,candidates:c.filter(x=>x.score>=Math.max(clarifyThreshold,top.score-0.14)).slice(0,5)};
   return {status:'none',confidence:top.score,candidates:c};
 }
+function genericProductChoices(value){
+  const t=normalizeText(value||'');
+  if(!t) return null;
+  if(/^(?:карт|карта|карты|карточн)/.test(t) || t==='банковские карты') return ['Дебетовые карты','Кредитные карты'];
+  if(/^(?:кредит|кредиты|кредитование)$/.test(t)) return [...CREDIT_PRODUCTS];
+  if(/страхов/.test(t) && !/осаго|каско/.test(t)) return [...INSURANCE_PRODUCTS];
+  return null;
+}
+function looksLikeIndicatorPhrase(value){
+  const t=normalizeText(value||'');
+  if(!t) return false;
+  return /(колич|числ|объ[её]м|оборот|сумм|доля|уровень|проникнов|конверс|клиент|продаж|выдач|сбор|операц|транзакц|остат|активац|заяв|одобр)/.test(t);
+}
+function looksLikeProductPhrase(value){
+  const t=normalizeText(value||'');
+  if(!t) return false;
+  if(genericProductChoices(t)) return true;
+  const d=coreCatalogDecision(value, PRODUCTS, PRODUCT_ALIASES, 0.86, 0.58);
+  return d.status!=='none';
+}
+function repairInterpretedRoles(data,userText,expectedStep=''){
+  const out={...(data||{})};
+  const raw=String(userText||'').trim();
+  // Ответ на CLARIFICATION относится к ожидаемому полю, а не является новым запросом.
+  if(expectedStep && ['indicator','product','channel','segment'].includes(expectedStep) && !out[expectedStep] && raw){
+    out[expectedStep]=raw;
+  }
+  // Семантическая sanity-check: не позволяем очевидному показателю оказаться продуктом и наоборот.
+  if(out.product && looksLikeIndicatorPhrase(out.product) && !looksLikeProductPhrase(out.product)){
+    if(!out.indicator) out.indicator=out.product;
+    out.product=null;
+  }
+  if(out.indicator && looksLikeProductPhrase(out.indicator) && !looksLikeIndicatorPhrase(out.indicator)){
+    if(!out.product) out.product=out.indicator;
+    out.indicator=null;
+  }
+  // Детерминированная проверка исходной фразы используется только как защитный слой
+  // после LLM: заполняет пропуски/исправляет переставленные роли, но не заменяет INTERPRETING.
+  const local=detect(raw);
+  if(local.indicator && (!out.indicator || looksLikeProductPhrase(out.indicator))) out.indicator=local.indicator;
+  if(local.product && !out.product) out.product=local.product;
+  if(!out.product && Array.isArray(local.productChoices) && local.productChoices.length){
+    if(/\bкарт(?:а|ы|ам|ах|ой|ами)?\b/i.test(normalizeText(raw))) out.product='карты';
+    else if(local.productGroup==='credit') out.product='кредиты';
+    else if(local.productGroup==='insurance') out.product='страхование';
+  }
+  return out;
+}
 function normalizeInterpretedData(data){
   const out={...data};
   // NORMALIZING: только алгоритм сопоставляет сырой JSON LLM с НСИ.
@@ -846,10 +901,14 @@ function normalizeInterpretedData(data){
     else { out.indicator=data.indicator; out.newIndicator=true; }
   }
   if(data.product){
-    const d=coreCatalogDecision(data.product, PRODUCTS, PRODUCT_ALIASES, 0.86, 0.64);
-    if(d.status==='auto') out.product=d.value;
-    else if(d.status==='clarify'){ out.product=null; out.productChoices=d.candidates.map(x=>x.entity.name); out.productMention=null; out.productGroup='ambiguous'; }
-    else { out.product=null; out.productMention=data.product; }
+    const genericChoices=genericProductChoices(data.product);
+    if(genericChoices){ out.product=null; out.productChoices=genericChoices; out.productMention=null; out.productGroup='ambiguous'; }
+    else {
+      const d=coreCatalogDecision(data.product, PRODUCTS, PRODUCT_ALIASES, 0.86, 0.64);
+      if(d.status==='auto') out.product=d.value;
+      else if(d.status==='clarify'){ out.product=null; out.productChoices=d.candidates.map(x=>x.entity.name); out.productMention=null; out.productGroup='ambiguous'; }
+      else { out.product=null; out.productMention=data.product; }
+    }
   }
   if(data.channel){
     const d=coreCatalogDecision(data.channel, CORE_CHANNELS, {}, 0.88, 0.66);
@@ -923,28 +982,39 @@ function renderLlmDiagnostic(){
 }
 async function processUserText(text){
   if(lastCreatedDriverId){ lastCreatedDriverId=null; renderContextActions(); }
-  // LLM-first: retrieval уже формирует shortlist кандидатов внутри prompt,
-  // но локальные if больше не перехватывают пользовательскую фразу до LLM.
+  // USER_CHOICE уже относится к конкретной сущности/полю: второй вызов LLM не нужен.
+  if(flow?.step && flow?.stepKind==='choice'){
+    handleFlowAnswer(text);
+    return;
+  }
   cancelPendingLlm();
   const requestId=++llmRequestSeq;
   setLlmBusy(true);
   try{
     const expectedStep=flow?.step||'';
+    if(!flow){
+      flow={phase:'INTERPRETING',step:'',stepKind:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',costMode:'',calcMethod:'',costProfile:[],costLogicText:'',costFormula:null,businessRationale:'',modelId:'',modelParams:null,plAllocations:[],incrementMode:'',channel:'',segment:'',status:'Черновик'},original:text};
+      save();
+    } else flow.phase='INTERPRETING';
     const data=await runLlmAttempt(text,flow?.candidate||{},expectedStep,requestId);
     if(requestId!==llmRequestSeq) return;
-    if(!flow){
-      flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',costMode:'',calcMethod:'',costProfile:[],costLogicText:'',costFormula:null,businessRationale:'',modelId:'',modelParams:null,plAllocations:[],incrementMode:'',channel:'',segment:'',status:'Черновик'},original:text};
-    }
-    const normalized=normalizeInterpretedData(data);
+    const repaired=repairInterpretedRoles(data,text,expectedStep);
+    flow.phase='NORMALIZING';
+    const normalized=normalizeInterpretedData(repaired);
     mergeLlmCandidate(normalized);
-    if(expectedStep && !normalized[expectedStep] && !normalized[`${expectedStep}Choices`]){ handleFlowAnswer(text); return; }
-    flow.step=''; flow.options=[]; save();
+    // CLARIFICATION возвращается в INTERPRETING с контекстом; после успешной
+    // интерпретации очищаем вопрос и продолжаем нормализацию/оркестрацию.
+    flow.step=''; flow.stepKind=''; flow.options=[]; save();
     continueFlow();
   }catch(err){
     if(requestId!==llmRequestSeq) return;
     console.warn('LLM fallback:',err);
     recordLlmDiagnostic({status:'fallback',reason:lastLlmDiagnostic?.status||'error',at:new Date().toISOString()});
-    flow ? handleFlowAnswer(text) : startFlow(text);
+    if(!flow) startFlow(text); else {
+      const repaired=repairInterpretedRoles({},text,flow.step||'');
+      mergeLlmCandidate(normalizeInterpretedData(repaired));
+      flow.step=''; flow.stepKind=''; flow.options=[]; save(); continueFlow();
+    }
   }finally{
     if(requestId===llmRequestSeq){ activeLlmController=null; setLlmBusy(false); }
   }
@@ -1000,7 +1070,7 @@ function localInterpretCostLogic(text){
 
 function startFlow(text) {
   const detected = detect(text);
-  flow = { step:'', candidate:{ ...detected, unit: detected.indicator ? unitFor(detected.indicator) : null, base:'', cost:'', costMode:'', calcMethod:'', costProfile:[], costLogicText:'', costFormula:null, businessRationale:'', modelId:'', modelParams:null, plAllocations:[], incrementMode:'', channel:'', segment:'', status:'Черновик' }, original:text };
+  flow = { phase:'NORMALIZING', step:'', stepKind:'', candidate:{ ...detected, unit: detected.indicator ? unitFor(detected.indicator) : null, base:'', cost:'', costMode:'', calcMethod:'', costProfile:[], costLogicText:'', costFormula:null, businessRationale:'', modelId:'', modelParams:null, plAllocations:[], incrementMode:'', channel:'', segment:'', status:'Черновик' }, original:text };
   save();
   continueFlow();
 }
@@ -1053,25 +1123,34 @@ function continueFlow() {
   }
   // Сначала разрешаем уже обнаруженную неоднозначность продукта: это обязательная
   // сущность, и нет смысла собирать остальные параметры до её проверки.
-  if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices);
-  if (!c.indicator && Array.isArray(c.indicatorChoices) && c.indicatorChoices.length) return ask('indicator','Уточни, что именно будем измерять.',c.indicatorChoices);
-  if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS);
-  if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS);
-  if (!c.indicator) return ask('indicator', 'Что именно будем измерять?', indicatorNames());
+  if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices, 'choice');
+  if (!c.indicator && Array.isArray(c.indicatorChoices) && c.indicatorChoices.length) return ask('indicator','Уточни, что именно будем измерять.',c.indicatorChoices,'choice');
+  if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS,'choice');
+  if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS,'choice');
+  if (!c.indicator) return ask('indicator', 'Что именно будем измерять?', [], 'clarification');
   if(isPlArticle(c.indicator)){
     addMessage('agent', `«${c.indicator}» — статья P&L, а статья P&L не может быть драйвером. Укажи бизнес-показатель, изменение которого формирует эту статью — например, объём или количество выдач.`);
-    c.indicator=null; c.unit=null; save(); return ask('indicator','Что именно будем измерять?',indicatorNames());
+    c.indicator=null; c.unit=null; save(); return ask('indicator','Что именно будем измерять?',[], 'clarification');
   }
+  // Сначала разрешаем обязательную аналитику продукта. Расчётные параметры
+  // (включая единицу нового показателя) не спрашиваем до завершения NORMALIZING.
+  if (!c.product) return ask('product', 'К какому продукту относится драйвер? Напиши название обычным языком — я найду варианты в справочнике.', [], 'clarification');
+  if (rejectUnknownProduct(c.product)) return;
+
   const indicatorState=checkIndicator(c.indicator);
   if(indicatorState==='new'){
     c.newIndicatorPrepared=true;
     if(!c.unit) c.unit=inferUnitForNewIndicator(c.indicator);
     save();
   }
-  if(c.newIndicator && !c.unit) return ask('unit','В чём измеряем значение драйвера?',['шт.','₽','%','Другое']);
+  if(c.newIndicator && !c.unit) return ask('unit','В чём измеряем значение драйвера?',['шт.','₽','%','Другое'],'choice');
   if(!c.newIndicator) c.unit = unitFor(c.indicator);
-  if (!c.product) return ask('product', 'К какому продукту относится драйвер? Напиши название обычным языком — я найду варианты в справочнике.');
-  if (rejectUnknownProduct(c.product)) return;
+
+  // RESOLVED: к проверке дубля переходим только после того, как получили
+  // indicator + конкретную combinationId из нормализованных аналитик.
+  const combo=ensureCombination(c);
+  if(combo){ c.combinationId=combo.id; c.combinationName=combo.name; }
+  flow.phase='RESOLVED'; save();
 
   if (!flow.duplicateChecked) {
     flow.duplicateChecked = true;
@@ -1140,9 +1219,13 @@ ${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)} ${formatMoney(pro
   if(!(c.plAllocations||[]).length) return ask('plArticle','На какую статью P&L относится рассчитанный эффект?',PL_ARTICLES);
   showPreview();
 }
-function ask(step, text, options=[]) {
+function ask(step, text, options=[], kind='') {
   if (flow.step !== step) addMessage('agent', text);
-  flow.step = step; flow.options = options; save(); renderContextActions(); renderProgress();
+  flow.step = step;
+  flow.options = options;
+  flow.stepKind = kind || (options.length ? 'choice' : 'clarification');
+  flow.phase = flow.stepKind==='choice' ? 'USER_CHOICE' : 'CLARIFICATION';
+  save(); renderContextActions(); renderProgress();
 }
 function handleFlowAnswer(text) {
   const c = flow.candidate;
@@ -1213,7 +1296,7 @@ ${compactProfileLines(calculated)}
     if (!parsed) { addMessage('agent','Не смог разобрать стоимость. Укажи сумму в рублях, например «2500».'); return; }
     c.cost = parsed.cost;
   }
-  flow.step = ''; flow.options = []; save(); continueFlow();
+  flow.step = ''; flow.stepKind=''; flow.options = []; save(); continueFlow();
 }
 function normalizeEffect(text) {
   const t=text.toLowerCase();

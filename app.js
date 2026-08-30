@@ -980,10 +980,24 @@ function renderLlmDiagnostic(){
   const attempt=d.attempt?` · попытка ${d.attempt}/${LLM_MAX_ATTEMPTS}`:'';
   el.textContent=`Последний вызов: ${labels[d.status]||d.status}${seconds}${attempt}`;
 }
+function shouldHandleFlowAnswerLocally(flowState){
+  if(!flowState?.step) return false;
+  // Выбор из уже нормализованных кандидатов никогда не отправляем обратно в LLM.
+  if(flowState.stepKind==='choice') return true;
+  // После RESOLVED пользователь вводит операционные/расчётные параметры. Это уже не
+  // INTERPRETING бизнес-смысла, поэтому такие ответы обрабатываются детерминированно.
+  return new Set([
+    'unitCustom','effectType','channel','segment','base','modelChoice','calcMethod',
+    'modelAvgCheck','modelConversion','modelMargin','modelRisk','modelRepayment',
+    'modelHorizon','modelCreditTerm','costRule','costProfile','plArticle','formulaMonths','cost'
+  ]).has(flowState.step);
+}
 async function processUserText(text){
   if(lastCreatedDriverId){ lastCreatedDriverId=null; renderContextActions(); }
-  // USER_CHOICE уже относится к конкретной сущности/полю: второй вызов LLM не нужен.
-  if(flow?.step && flow?.stepKind==='choice'){
+  // LLM нужен только там, где мы действительно уточняем смысл исходного запроса
+  // (например, indicator/product). Числа, стоимость, срок, P&L и выбранные варианты
+  // обрабатываются локально — иначе LLM стирает текущий step и сценарий зацикливается.
+  if(shouldHandleFlowAnswerLocally(flow)){
     handleFlowAnswer(text);
     return;
   }
@@ -1250,6 +1264,12 @@ function handleFlowAnswer(text) {
   else if(flow.step==='modelHorizon'){
     const n=Number(String(text).match(/\d+/)?.[0]||0); if(!n||n>36){addMessage('agent','Укажи срок от 1 до 36 месяцев.');return;} c.modelParams={...(c.modelParams||{}),horizon:n};
   }
+  else if(flow.step==='modelCreditTerm'){
+    const raw=String(text).replace(',','.');
+    const n=Number(raw.match(/\d+(?:\.\d+)?/)?.[0]||0);
+    if(!n || n<=0){ addMessage('agent','Укажи срок кредита в годах, например 1, 2 или 3.'); return; }
+    c.modelParams={...(c.modelParams||{}),creditTermYears:String(n)};
+  }
   else if (flow.step === 'costRule') {
     flow.pendingCostLogic=text; flow.step='formulaParsing'; save(); addMessage('agent','Понял. Сначала формализую правило, потом покажу расчёт…');
     (async()=>{
@@ -1385,6 +1405,20 @@ function renderContextActions() {
     el.innerHTML=(flow.options||[]).map(o=>`<button data-flow-value="${escapeHtml(o)}">${escapeHtml(o)}</button>`).join('') + `<button data-flow-action="cancel" class="quiet">Отмена</button>`;
   }
 }
+function flowProgressStage(){
+  if(!flow) return {stage:0,total:6,label:''};
+  const c=flow.candidate||{};
+  const step=flow.step||'';
+  if(flow.phase==='INTERPRETING') return {stage:1,total:6,label:'Понимаю запрос'};
+  if(['indicator','product','unit','unitCustom','channel','segment'].includes(step) || !c.indicator || !c.product || !c.combinationId)
+    return {stage:2,total:6,label:'Уточняю данные'};
+  if(['duplicate','duplicateAnalytics','similar'].includes(step) || !flow.duplicateChecked)
+    return {stage:3,total:6,label:'Проверяю реестр'};
+  if(['modelChoice','calcMethod','modelAvgCheck','modelConversion','modelMargin','modelRisk','modelRepayment','modelHorizon','modelCreditTerm','costRule','formulaMonths','formulaConfirm','costProfile','cost','base','effectType','plArticle','modelResult','modelDetails'].includes(step) || !(c.costProfile||[]).length)
+    return {stage:4,total:6,label:'Определяю стоимость'};
+  if(step==='preview') return {stage:5,total:6,label:'Проверяю результат'};
+  return {stage:5,total:6,label:'Готовлю создание'};
+}
 function renderProgress() {
   const el=document.getElementById('progress');
   if (!flow) { el.hidden=true; return; }
@@ -1395,9 +1429,16 @@ function renderProgress() {
   if(c.channel) understood.push(c.channel);
   if(c.segment) understood.push(c.segment);
   const summary=understood.length?understood.join(' · '):(c.productMention?`${c.productMention} · уточняю детали`:'Уточняю детали');
+  const p=flowProgressStage();
+  const percent=Math.max(8,Math.min(100,Math.round((p.stage/p.total)*100)));
+  const left=Math.max(0,p.total-p.stage);
   el.hidden=false;
-  el.innerHTML=`<div><strong>Создание драйвера</strong></div><small>${escapeHtml(summary)}</small>`;
+  el.innerHTML=`<div><strong>Создание драйвера</strong><span>${p.stage}/${p.total}</span></div>
+    <div class="progress-track"><i style="width:${percent}%"></i></div>
+    <div class="progress-meta"><small>${escapeHtml(p.label)}</small><small>${left?`осталось ${left} ${left===1?'шаг':'шага'}`:'почти готово'}</small></div>
+    <small class="progress-summary">${escapeHtml(summary)}</small>`;
 }
+
 function renderRegistry() {
   const q=(document.getElementById('registrySearch')?.value||'').trim().toLowerCase();
   const list=drivers.filter(d=>!q || [d.name,d.indicator,d.product,d.effectType,d.status,d.channel,d.segment].join(' ').toLowerCase().includes(q));

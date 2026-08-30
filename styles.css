@@ -211,3 +211,11 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
 .combination-dict-table td:first-child small{display:block;color:#8d9abd;font-size:.74rem;margin-top:4px}
 .combination-dict-table th:nth-child(2),.combination-dict-table td:nth-child(2){min-width:180px}
 @media(max-width:520px){.combination-dict-table th:nth-child(2),.combination-dict-table td:nth-child(2){font-size:.78rem;min-width:130px}.combination-summary{padding:12px}}
+
+/* v6.3 — workflow progress */
+.progress-track{height:6px;background:#202a45;border-radius:999px;overflow:hidden;margin:9px 0 6px}
+.progress-track i{display:block;height:100%;background:linear-gradient(90deg,#1fb879,#42d29a);border-radius:999px;transition:width .28s ease}
+.progress-meta{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:4px}
+.progress-meta small:first-child{color:#aeb8d4;font-weight:750}
+.progress-meta small:last-child{color:#6f7d9e}
+.progress-summary{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}

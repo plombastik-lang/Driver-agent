@@ -65,6 +65,10 @@ let indicatorRegistry = load(INDICATOR_REGISTRY_KEY, Object.entries(INDICATOR_ME
 // Удаляем тестовые записи из старых локальных данных и восстанавливаем базовые активные показатели.
 indicatorRegistry = indicatorRegistry.filter(x => normalizeText(x.name) !== normalizeText('Сокращение пробега'));
 for (const [name,unit] of Object.entries(INDICATOR_META)) if(!indicatorRegistry.some(x=>normalizeText(x.name)===normalizeText(name))) indicatorRegistry.push({name,unit,status:'Активен'});
+for (const item of indicatorRegistry){
+  if(/^(?:оборот|обороты|объем оборота|объём оборота|объем оборотов|объём оборотов)$/.test(normalizeText(item.name))){ item.name='Объём оборотов'; item.unit='₽'; }
+}
+indicatorRegistry=indicatorRegistry.filter((x,i,a)=>a.findIndex(y=>normalizeText(y.name)===normalizeText(x.name))===i);
 function indicatorNames(){ return indicatorRegistry.map(x=>x.name); }
 function indicatorRecord(name){ const c=canonicalFromList(name, indicatorNames()); return c ? indicatorRegistry.find(x=>x.name===c) : null; }
 
@@ -369,7 +373,15 @@ drivers = drivers.map(d => ({
   incrementMode: d.incrementMode || inferIncrementMode({indicator:d.indicator,unit:d.unit}),
   plAllocations: Array.isArray(d.plAllocations) ? d.plAllocations : ((d.costProfile||[]).length ? [{article: d.effectType==='Расходы'?'Прочие расходы':'Прочие доходы', profile: d.costProfile}] : []),
   status: d.status === 'Готов' && !String(d.cost || '').trim() && !(Array.isArray(d.costProfile)&&d.costProfile.length) ? 'Черновик' : d.status
-})).map(syncDriverCombination);
+})).map(d=>{ if(/^(?:оборот|обороты|объем оборота|объём оборота|объем оборотов|объём оборотов)$/.test(normalizeText(d.indicator))) { d.indicator='Объём оборотов'; d.unit='₽'; d.name=buildDriverName(d); } return d; }).map(syncDriverCombination);
+// Миграция статусов комбинаций: новые комбинации для драйверов на согласовании считаем подготовленными,
+// но не понижаем статусы базовых комбинаций из демо-НСИ.
+const seedCombinationKeys=new Set(buildSeedCombinations(seedDrivers).map(x=>x.key));
+for(const combo of combinationRegistry){
+  if(seedCombinationKeys.has(combo.key)) continue;
+  const linked=drivers.filter(d=>d.combinationId===combo.id || combinationKeyOf(d)===combo.key);
+  if(linked.length && linked.every(d=>d.status==='На согласовании')) combo.status='Подготовлена';
+}
 function normalizeStoredBase(base){
   const s=String(base||'').toLowerCase().replace(/\s/g,'');
   if(!s) return '';
@@ -446,7 +458,7 @@ function detect(text) {
 
   let indicator = null;
   if ((t.includes('объем') || t.includes('объём')) && t.includes('выдач')) indicator = 'Объём выдач';
-  else if (t.includes('выдач')) indicator = 'Количество выдач';
+  else if ((t.includes('колич') || t.includes('числ')) && t.includes('выдач')) indicator = 'Количество выдач';
   else if (t.includes('клиент')) indicator = 'Количество клиентов';
   else if (t.includes('сбор')) indicator = 'Объём сборов';
   else if (t.includes('продаж')) indicator = 'Количество продаж';
@@ -475,7 +487,8 @@ function detect(text) {
   }
   const productGroup = productChoices ? 'ambiguous' : (!product && genericCredit ? 'credit' : (!product && genericInsurance ? 'insurance' : null));
   const productMention = !product && !productChoices && !productGroup ? extractUnresolvedProductMention(text) : null;
-  return { indicator, product, effectType, productGroup, productChoices, productMention };
+  const indicatorChoices = !indicator && /выдач/.test(t) ? ['Количество выдач','Объём выдач'] : null;
+  return { indicator, indicatorChoices, product, effectType, productGroup, productChoices, productMention };
 }
 function normalizeText(value){ return String(value||'').trim().toLowerCase().replace(/ё/g,'е').replace(/[–—-]/g,' ').replace(/\s+/g,' '); }
 function canonicalFromList(value, list) {
@@ -514,12 +527,12 @@ function combinationType(combo){
   const flags=[combo?.product?'Продукт':'',combo?.channel?'Канал':'',combo?.segment?'Сегмент':''].filter(Boolean);
   return flags.join(' + ') || '—';
 }
-function makeCombination(value={}, preferredId=''){
+function makeCombination(value={}, preferredId='', status='Активна'){
   const product=String(value.product||'').trim();
   const channel=String(value.channel||'').trim();
   const segment=String(value.segment||'').trim();
   const key=combinationKeyFromParts(product,channel,segment);
-  return {id:preferredId||`combo-${Math.abs(hashString(key))}`, key, name:combinationNameFromParts(product,channel,segment), product, channel, segment, type:'analytics', status:'Активна'};
+  return {id:preferredId||`combo-${Math.abs(hashString(key))}`, key, name:combinationNameFromParts(product,channel,segment), product, channel, segment, type:'analytics', status};
 }
 function hashString(str){ let h=0; for(let i=0;i<str.length;i++){ h=((h<<5)-h)+str.charCodeAt(i); h|=0; } return h; }
 function buildSeedCombinations(sourceDrivers=[]){
@@ -540,15 +553,15 @@ function buildSeedCombinations(sourceDrivers=[]){
   ].forEach(x=>{ const c=makeCombination(x); if(!map.has(c.key)) map.set(c.key,c); });
   return [...map.values()];
 }
-function ensureCombination(value={}){
+function ensureCombination(value={}, newStatus='Активна'){
   if(!value.product) return null;
   const key=combinationKeyFromParts(value.product,value.channel,value.segment);
   let combo=combinationRegistry.find(x=>x.key===key);
-  if(!combo){ combo=makeCombination(value); combinationRegistry.push(combo); }
+  if(!combo){ combo=makeCombination(value,'',newStatus); combinationRegistry.push(combo); }
   return combo;
 }
 function syncDriverCombination(d){
-  const combo=ensureCombination(d);
+  const combo=ensureCombination(d, d.status==='На согласовании'?'Подготовлена':'Активна');
   if(combo){ d.combinationId=combo.id; d.combinationName=combo.name; }
   return d;
 }
@@ -891,14 +904,31 @@ function repairInterpretedRoles(data,userText,expectedStep=''){
   }
   return out;
 }
+function canonicalNewIndicatorName(value){
+  const t=normalizeText(value||'');
+  if(/^(?:оборот|обороты|объем оборота|объём оборота|объем оборотов|объём оборотов)$/.test(t)) return 'Объём оборотов';
+  return String(value||'').trim();
+}
+function genericIndicatorChoices(value){
+  const t=normalizeText(value||'');
+  // «выдачи» без явного количества/объёма — действительно неоднозначный бизнес-смысл.
+  if(/^(?:выдач|выдачи|кредитные выдачи|выдачи кредитов)$/.test(t)) return ['Количество выдач','Объём выдач'];
+  return null;
+}
 function normalizeInterpretedData(data){
   const out={...data};
   // NORMALIZING: только алгоритм сопоставляет сырой JSON LLM с НСИ.
   if(data.indicator){
-    const d=coreCatalogDecision(data.indicator, indicatorNames(), INDICATOR_ALIASES, 0.90, 0.68);
-    if(d.status==='auto') out.indicator=d.value;
-    else if(d.status==='clarify'){ out.indicator=null; out.indicatorChoices=d.candidates.map(x=>x.entity.name); out.indicatorMention=data.indicator; }
-    else { out.indicator=data.indicator; out.newIndicator=true; }
+    const genericChoices=genericIndicatorChoices(data.indicator);
+    if(genericChoices){
+      out.indicator=null; out.indicatorChoices=genericChoices; out.indicatorMention=data.indicator; out.newIndicator=false;
+    } else {
+      const canonicalNew=canonicalNewIndicatorName(data.indicator);
+      const d=coreCatalogDecision(canonicalNew, indicatorNames(), INDICATOR_ALIASES, 0.90, 0.68);
+      if(d.status==='auto') { out.indicator=d.value; out.newIndicator=false; }
+      else if(d.status==='clarify'){ out.indicator=null; out.indicatorChoices=d.candidates.map(x=>x.entity.name); out.indicatorMention=data.indicator; out.newIndicator=false; }
+      else { out.indicator=canonicalNew; out.newIndicator=true; }
+    }
   }
   if(data.product){
     const genericChoices=genericProductChoices(data.product);
@@ -1218,8 +1248,14 @@ function continueFlow() {
       const result=calculateModel(c); const profile=result.profile;
       c.costProfile=profile; c.plAllocations=result.allocations; c.cost=String(profileTotal(profile)); c.costLogicText=modelLogic(c); c.businessRationale=modelBusinessRationale(c);
       flow.step='modelResult'; save();
+      const sourceLabel=p?.sourcePeriod||'Среднее за последние 3 месяца прогнозного года';
+      const sourceValues=model?.id==='credit_income_v2'
+        ? [c.indicator==='Количество выдач'&&p.avgCheck?`средний чек ${formatMoney(p.avgCheck)} ₽`:null,`маржа ${p.margin}%`,`риск ${p.risk}%`,`погашение ${p.repayment}%/мес.`,`срок ${p.creditTermYears} г.`].filter(Boolean).join(' · ')
+        : `коэффициент ${p.conversion}%`;
       addMessage('agent', `Стоимость рассчитана: ${formatMoney(profileTotal(profile))} ₽ на ${baseLabel(c.base)} ${c.unit}.
 Профиль: ${profile.length} мес. · модель «${model.title}».
+Источник: демо-данные прогнозной модели · ${sourceLabel.toLowerCase()}.
+Исходные значения: ${sourceValues}.
 ${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)} ${formatMoney(profileTotal(a.profile||[]))} ₽`).join(' · ')}`, 'result');
       renderContextActions(); renderProgress(); return;
     }
@@ -1361,8 +1397,10 @@ function finalizeDriver() {
   const duplicate=exactDuplicate(c); if(duplicate){ addMessage('agent','Такой драйвер с этой же аналитикой уже существует. Чтобы создать новый, измени продукт, канал или сегмент.'); flow.duplicateChecked=false; flow.step=''; save(); continueFlow(); return; }
   let indicator=indicatorRecord(c.indicator);
   if(!indicator){ indicator={name:c.indicator,unit:c.unit,status:'Подготовлен'}; indicatorRegistry.push(indicator); }
-  const needsApproval = indicator.status==='Подготовлен';
-  const combo=ensureCombination(c);
+  const combinationKey=combinationKeyFromParts(c.product,c.channel,c.segment);
+  const combinationExists=combinationRegistry.some(x=>x.key===combinationKey);
+  const needsApproval = indicator.status==='Подготовлен' || !combinationExists;
+  const combo=ensureCombination(c, combinationExists?'Активна':'Подготовлена');
   const driver={ id:String(Date.now()), name:buildDriverName(c), indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', calcMethod:c.calcMethod||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', modelId:c.modelId||'', modelParams:c.modelParams||null, plAllocations:c.plAllocations||[], incrementMode:c.incrementMode||inferIncrementMode(c), channel:c.channel||'', segment:c.segment||'', combinationId:combo?.id||'', combinationName:combo?.name||'', status:needsApproval?'На согласовании':'Готов' };
   drivers.unshift(driver); flow=null; lastCreatedDriverId=driver.id; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress();
   addMessage('agent', needsApproval ? `Готово. «${driver.name}» создан и направлен на согласование. После согласования он станет доступен для использования.` : `Готово. «${driver.name}» создан со статусом «Готов».`);
@@ -1489,7 +1527,7 @@ function renderDictionaries(){
   document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
   const ch=document.getElementById('channelDict'); if(ch) ch.innerHTML=CORE_CHANNELS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
   const sg=document.getElementById('segmentDict'); if(sg) sg.innerHTML=CORE_SEGMENTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
-  const combo=document.getElementById('combinationDict'); if(combo) combo.innerHTML=combinationRegistry.map(x=>`<tr><td><strong>${escapeHtml(x.name)}</strong><small>${escapeHtml(combinationType(x))}</small></td><td>${escapeHtml(combinationComposition(x))}</td><td><span class="table-status">${escapeHtml(x.status||'Активна')}</span></td></tr>`).join('');
+  const combo=document.getElementById('combinationDict'); if(combo) combo.innerHTML=combinationRegistry.map(x=>`<tr><td><strong>${escapeHtml(x.name)}</strong><small>${escapeHtml(combinationType(x))}</small></td><td><span class="table-status ${x.status==='Подготовлена'?'approval':''}">${escapeHtml(x.status||'Активна')}</span></td></tr>`).join('');
   const pl=document.getElementById('plArticleDict'); if(pl) pl.innerHTML=PL_ARTICLES.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активна</span></td></tr>`).join('');
   document.getElementById('indicatorCount').textContent=`${indicatorRegistry.length} записей`;
   document.getElementById('productCount').textContent=`${PRODUCTS.length} записей`;
@@ -1522,12 +1560,18 @@ function renderPlAllocationEditor(allocations=[]){
   const months=Math.max(...list.map(a=>(a.profile||[]).length),1);
   const visible=Math.min(months,3);
   const method=document.getElementById('editCalcMethod')?.value;
-  const isModel=method==='model';
-  const isComputed=isModel||method==='rule';
-  const rows=Array.from({length:months},(_,i)=>`<tr class="pl-month-row ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><td>${i+1}</td>${list.map((a,idx)=>`<td>${isComputed?`<span class="pl-static">${compactRub(a.profile?.[i]??0)}</span>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</td>`).join('')}<td><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></td></tr>`).join('');
-  el.innerHTML=`<div class="pl-combined-wrap"><table class="pl-combined ${isComputed?'model-table':''}"><thead><tr><th>Мес.</th>${list.map(a=>`<th title="${escapeHtml(a.article)}">${escapeHtml(shortArticleName(a.article))}</th>`).join('')}<th>Итого</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th>${list.map(a=>`<th>${compactRub(profileTotal(a.profile||[]))}</th>`).join('')}<th>${compactRub(profileTotal(profileFromPlAllocations(list)))}</th></tr></tfoot></table></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
+  const isComputed=method==='model'||method==='rule';
+  const mobile=window.matchMedia('(max-width: 700px)').matches;
+  if(mobile){
+    const cards=Array.from({length:months},(_,i)=>`<div class="pl-mobile-month ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><div class="pl-mobile-head"><strong>Месяц ${i+1}</strong><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></div>${list.map((a,idx)=>`<label class="pl-mobile-line"><span>${escapeHtml(shortArticleName(a.article))}</span>${isComputed?`<b>${compactRub(a.profile?.[i]??0)}</b>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</label>`).join('')}</div>`).join('');
+    el.innerHTML=`<div class="pl-mobile-list">${cards}</div><div class="pl-mobile-total"><span>Итого за профиль</span><strong>${compactRub(profileTotal(profileFromPlAllocations(list)))}</strong></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
+  } else {
+    const rows=Array.from({length:months},(_,i)=>`<tr class="pl-month-row ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><td>${i+1}</td>${list.map((a,idx)=>`<td>${isComputed?`<span class="pl-static">${compactRub(a.profile?.[i]??0)}</span>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</td>`).join('')}<td><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></td></tr>`).join('');
+    el.innerHTML=`<div class="pl-combined-wrap"><table class="pl-combined ${isComputed?'model-table':''}"><thead><tr><th>Мес.</th>${list.map(a=>`<th title="${escapeHtml(a.article)}">${escapeHtml(shortArticleName(a.article))}</th>`).join('')}<th>Итого</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th>${list.map(a=>`<th>${compactRub(profileTotal(a.profile||[]))}</th>`).join('')}<th>${compactRub(profileTotal(profileFromPlAllocations(list)))}</th></tr></tfoot></table></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
+  }
   document.getElementById('togglePlMonths')?.addEventListener('click',e=>{ const hidden=[...el.querySelectorAll('.extra-month')].some(r=>r.hidden); el.querySelectorAll('.extra-month').forEach(r=>r.hidden=!hidden); e.currentTarget.textContent=hidden?'Скрыть лишние месяцы':'Показать все месяцы'; });
 }
+
 function getPlAllocationsFromEditor(){
   const id=document.getElementById('editId')?.value; const original=drivers.find(x=>x.id===id)?.plAllocations||[];
   const headers=original.map(a=>a.article);
@@ -1664,7 +1708,9 @@ document.getElementById('backToRegistry').addEventListener('click',closeDriver);
 document.getElementById('approveDriver').addEventListener('click',()=>{
   const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
   if(!String(d.cost||'').trim()){ toast('Сначала укажи стоимость'); return; }
-  d.status='Готов'; const ind=indicatorRecord(d.indicator); if(ind && ind.status==='Подготовлен') ind.status='Активен';
+  d.status='Готов';
+  const ind=indicatorRecord(d.indicator); if(ind && ind.status==='Подготовлен') ind.status='Активен';
+  const combo=combinationRegistry.find(x=>x.id===d.combinationId); if(combo && combo.status==='Подготовлена') combo.status='Активна';
   save(); renderAll(); openDriver(id); toast('Драйвер согласован');
 });
 document.getElementById('driverForm').addEventListener('submit',e=>{

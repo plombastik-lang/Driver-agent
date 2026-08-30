@@ -1,4 +1,4 @@
-# Driver Agent v6.3
+# Driver Agent v6.4
 
 State-machine fix for INTERPRETING → CLARIFICATION → NORMALIZING → USER_CHOICE → RESOLVED.
 
@@ -12,7 +12,7 @@ Key changes:
 - combinationId is created/resolved before duplicate checking.
 
 
-## v6.3 fixes
+## v6.4 fixes
 - Fixed manual cost loop: operational answers no longer go through the main LLM interpreting path.
 - Added deterministic handling for manual cost, model parameters, credit term, P&L and other calculation inputs.
 - Restored a 6-stage progress bar with remaining-step indication.

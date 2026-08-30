@@ -1,5 +1,5 @@
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
-const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.7';
+const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.9';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
@@ -12,7 +12,9 @@ let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
 let lastCreatedDriverId = null;
 let llmRequestSeq = 0;
 let activeLlmController = null;
-const LLM_REQUEST_TIMEOUT_MS = 15000;
+const LLM_REQUEST_TIMEOUT_MS = 30000;
+const LLM_MAX_ATTEMPTS = 2;
+let lastLlmDiagnostic = JSON.parse(localStorage.getItem('driver-agent.llm-diagnostic.v1') || 'null');
 
 
 function authHeaders(extra={}){
@@ -448,6 +450,7 @@ function detect(text) {
   else if (t.includes('доля рынка')) indicator = 'Доля рынка';
   else if (t.includes('уров') && t.includes('проникнов')) indicator = 'Уровень проникновения';
   else if (t.includes('бонус')) indicator = 'Количество бонусов';
+  else if (t.includes('оборот')) indicator = 'Объём оборота';
 
   let effectType = null;
   if (t.includes('расход') || t.includes('сокращ') || t.includes('не найм') || t.includes('ненайм')) effectType = 'Расходы';
@@ -461,6 +464,11 @@ function detect(text) {
   }
   if (genericInsurance && !product && (/кредитк/.test(t) || (t.includes('кредитн') && t.includes('карт')))) {
     productChoices = ['ОСАГО','КАСКО','Кредитные карты'];
+  }
+  // Общее слово «карты» не является продуктом. В справочнике есть как минимум
+  // дебетовые и кредитные карты, поэтому не завершаем сценарий ошибкой, а уточняем.
+  if (!product && !productChoices && /(?:^|\s)карт(?:а|ы|ам|ах|ой|ами)?(?:\s|$)/.test(t)) {
+    productChoices = ['Дебетовые карты','Кредитные карты'];
   }
   const productGroup = productChoices ? 'ambiguous' : (!product && genericCredit ? 'credit' : (!product && genericInsurance ? 'insurance' : null));
   const productMention = !product && !productChoices && !productGroup ? extractUnresolvedProductMention(text) : null;
@@ -762,45 +770,71 @@ function mergeLlmCandidate(data){
   const newIdentity=`${c.indicator||''}|${c.product||''}`;
   if(oldIdentity!==newIdentity){ delete flow.duplicateChecked; delete flow.duplicateId; }
 }
+async function runLlmAttempt(userText,candidate,expectedStep,requestId){
+  let lastError=null;
+  for(let attempt=1;attempt<=LLM_MAX_ATTEMPTS;attempt++){
+    if(requestId!==llmRequestSeq) throw new DOMException('Session changed','AbortError');
+    const controller=new AbortController();
+    activeLlmController=controller;
+    const started=performance.now();
+    const timeoutId=setTimeout(()=>controller.abort(), LLM_REQUEST_TIMEOUT_MS);
+    try{
+      const data=await callOpenRouter(userText,candidate,expectedStep,controller.signal);
+      clearTimeout(timeoutId);
+      const ms=Math.round(performance.now()-started);
+      recordLlmDiagnostic({status:'success',attempt,ms,at:new Date().toISOString()});
+      return data;
+    }catch(err){
+      clearTimeout(timeoutId);
+      if(requestId!==llmRequestSeq) throw err;
+      const ms=Math.round(performance.now()-started);
+      const kind=err?.name==='AbortError'?'timeout':(/JSON|разобрать|пустой/i.test(err?.message||'')?'json_error':'http_error');
+      recordLlmDiagnostic({status:kind,attempt,ms,message:err?.message||String(err),at:new Date().toISOString()});
+      lastError=err;
+      if(attempt<LLM_MAX_ATTEMPTS) await new Promise(r=>setTimeout(r,250));
+    }
+  }
+  throw lastError || new Error('LLM недоступна');
+}
+function recordLlmDiagnostic(info){
+  lastLlmDiagnostic=info;
+  localStorage.setItem('driver-agent.llm-diagnostic.v1',JSON.stringify(info));
+  renderLlmDiagnostic();
+}
+function renderLlmDiagnostic(){
+  const el=document.getElementById('llmDiagnostic'); if(!el) return;
+  if(!lastLlmDiagnostic){ el.textContent='Последний вызов: нет данных'; return; }
+  const d=lastLlmDiagnostic;
+  const labels={success:'успешно',timeout:'таймаут',http_error:'ошибка API',json_error:'ошибка ответа',fallback:'локальный fallback'};
+  const seconds=Number.isFinite(d.ms)?` · ${(d.ms/1000).toFixed(1)} с`:'';
+  const attempt=d.attempt?` · попытка ${d.attempt}/${LLM_MAX_ATTEMPTS}`:'';
+  el.textContent=`Последний вызов: ${labels[d.status]||d.status}${seconds}${attempt}`;
+}
 async function processUserText(text){
   if(lastCreatedDriverId){ lastCreatedDriverId=null; renderContextActions(); }
-  if(!flow){ const quick=detect(text); if(quick.productGroup){ startFlow(text); return; } }
-
-  // Один активный LLM-запрос за раз. Старый ответ не имеет права оживить
-  // уже завершённую/сброшенную сессию.
+  // LLM-first: retrieval уже формирует shortlist кандидатов внутри prompt,
+  // но локальные if больше не перехватывают пользовательскую фразу до LLM.
   cancelPendingLlm();
   const requestId=++llmRequestSeq;
-  const controller=new AbortController();
-  activeLlmController=controller;
-  const timeoutId=setTimeout(()=>controller.abort(), LLM_REQUEST_TIMEOUT_MS);
   setLlmBusy(true);
-
   try{
     const expectedStep=flow?.step||'';
-    const data=await callOpenRouter(text,flow?.candidate||{},expectedStep,controller.signal);
+    const data=await runLlmAttempt(text,flow?.candidate||{},expectedStep,requestId);
     if(requestId!==llmRequestSeq) return;
     if(!flow){
       flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',costMode:'',calcMethod:'',costProfile:[],costLogicText:'',costFormula:null,businessRationale:'',modelId:'',modelParams:null,plAllocations:[],incrementMode:'',channel:'',segment:'',status:'Черновик'},original:text};
     }
     mergeLlmCandidate(data);
-    if(expectedStep && !data[expectedStep]){
-      handleFlowAnswer(text);
-      return;
-    }
+    if(expectedStep && !data[expectedStep]){ handleFlowAnswer(text); return; }
     flow.step=''; flow.options=[]; save();
     continueFlow();
   }catch(err){
     if(requestId!==llmRequestSeq) return;
     console.warn('LLM fallback:',err);
-    // Таймаут/сбой внешней модели не блокирует пользователя: продолжаем
-    // по локальному retrieval и детерминированным бизнес-правилам.
+    recordLlmDiagnostic({status:'fallback',reason:lastLlmDiagnostic?.status||'error',at:new Date().toISOString()});
     flow ? handleFlowAnswer(text) : startFlow(text);
   }finally{
-    clearTimeout(timeoutId);
-    if(requestId===llmRequestSeq){
-      activeLlmController=null;
-      setLlmBusy(false);
-    }
+    if(requestId===llmRequestSeq){ activeLlmController=null; setLlmBusy(false); }
   }
 }
 async function testLlmConnection(){
@@ -808,20 +842,24 @@ async function testLlmConnection(){
   const meta=document.getElementById('llmMeta');
   const status=document.getElementById('llmStatus');
   if(btn){btn.disabled=true;btn.textContent='Проверяю…';}
+  const requestId=++llmRequestSeq;
   try{
-    await callOpenRouter('Создай драйвер количества клиентов по ипотеке',{},'');
-    toast('Соединение работает');
-    if(meta) meta.textContent='Соединение проверено — всё работает.';
+    const data=await runLlmAttempt('Создай драйвер количества клиентов по ипотеке',{},'',requestId);
+    const d=lastLlmDiagnostic;
+    toast('LLM работает');
+    if(meta) meta.textContent=`Полный путь LLM работает${d?.ms?` · ${(d.ms/1000).toFixed(1)} с`:''}.`;
     if(status) status.textContent='Доступно';
   }catch(err){
     console.warn('Connection check failed:',err);
-    toast('Не удалось подключиться. Попробуйте ещё раз');
-    if(meta) meta.textContent='Не удалось проверить соединение. Попробуйте ещё раз.';
+    toast('LLM не ответила');
+    if(meta) meta.textContent='Полный вызов LLM завершился ошибкой. Ниже показана диагностика.';
     if(status) status.textContent='Недоступно';
+  }finally{
+    activeLlmController=null;
+    if(btn){btn.disabled=false;btn.textContent='Проверить';}
+    renderLlmDiagnostic();
   }
-  finally{if(btn){btn.disabled=false;btn.textContent='Проверить';}}
 }
-
 
 async function interpretCostLogic(text){
   const system=`Ты переводишь описание бизнес-логики стоимости финансового драйвера в простую воспроизводимую формулу. Верни ТОЛЬКО JSON без markdown. Разрешённые типы:
@@ -906,10 +944,10 @@ function continueFlow() {
   if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices);
   if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS);
   if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS);
-  if (!c.indicator) return ask('indicator', 'Какой показатель должен лежать в основе драйвера?', indicatorNames());
+  if (!c.indicator) return ask('indicator', 'Что именно будем измерять?', indicatorNames());
   if(isPlArticle(c.indicator)){
     addMessage('agent', `«${c.indicator}» — статья P&L, а статья P&L не может быть драйвером. Укажи бизнес-показатель, изменение которого формирует эту статью — например, объём или количество выдач.`);
-    c.indicator=null; c.unit=null; save(); return ask('indicator','Какой бизнес-показатель должен лежать в основе драйвера?',indicatorNames());
+    c.indicator=null; c.unit=null; save(); return ask('indicator','Что именно будем измерять?',indicatorNames());
   }
   const indicatorState=checkIndicator(c.indicator);
   if(indicatorState==='new'){
@@ -1211,9 +1249,13 @@ function renderModels(){
 function renderDictionaries(){
   document.getElementById('indicatorDict').innerHTML=indicatorRegistry.map(x=>`<tr><td>${escapeHtml(x.name)}</td><td>${escapeHtml(x.unit||'—')}</td><td><span class="table-status ${x.status==='Подготовлен'?'approval':''}">${escapeHtml(x.status)}</span></td></tr>`).join('');
   document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  const ch=document.getElementById('channelDict'); if(ch) ch.innerHTML=CORE_CHANNELS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  const sg=document.getElementById('segmentDict'); if(sg) sg.innerHTML=CORE_SEGMENTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
   const pl=document.getElementById('plArticleDict'); if(pl) pl.innerHTML=PL_ARTICLES.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активна</span></td></tr>`).join('');
   document.getElementById('indicatorCount').textContent=`${indicatorRegistry.length} записей`;
   document.getElementById('productCount').textContent=`${PRODUCTS.length} записей`;
+  const cc=document.getElementById('channelCount'); if(cc) cc.textContent=`${CORE_CHANNELS.length} записей`;
+  const sc=document.getElementById('segmentCount'); if(sc) sc.textContent=`${CORE_SEGMENTS.length} записей`;
   const pc=document.getElementById('plArticleCount'); if(pc) pc.textContent=`${PL_ARTICLES.length} записей`;
 }
 function switchTab(name){
@@ -1560,7 +1602,7 @@ document.getElementById('logoutButton')?.addEventListener('click',()=>{
 });
 
 if('serviceWorker' in navigator) window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js'));
-function renderAll(){renderMessages();renderContextActions();renderProgress();renderRegistry();renderModels();renderDictionaries();renderLlmSettings();updateSummary();}
+function renderAll(){renderMessages();renderContextActions();renderProgress();renderRegistry();renderModels();renderDictionaries();renderLlmSettings();renderLlmDiagnostic();updateSummary();}
 if(authStillValid()){ hideAuthGate(); renderAll(); } else { clearAuth(); showAuthGate(''); }
 
 function openSettingsModal(){ const m=document.getElementById('settingsModal'); if(m){m.hidden=false;document.body.classList.add('modal-open');} }

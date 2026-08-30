@@ -1,5 +1,5 @@
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
-const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.6';
+const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.7';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
 const FLOW_KEY = 'driver-agent.pwa.flow.v2';
 const SESSION_HISTORY_KEY = 'driver-agent.pwa.session-history.v1';
@@ -10,6 +10,10 @@ const AUTH_TOKEN_KEY = 'driver-agent.auth.token.v1';
 const AUTH_EXPIRES_KEY = 'driver-agent.auth.expires.v1';
 let authToken = localStorage.getItem(AUTH_TOKEN_KEY) || '';
 let lastCreatedDriverId = null;
+let llmRequestSeq = 0;
+let activeLlmController = null;
+const LLM_REQUEST_TIMEOUT_MS = 15000;
+
 
 function authHeaders(extra={}){
   return {...extra, ...(authToken ? {Authorization:`Bearer ${authToken}`} : {})};
@@ -627,7 +631,7 @@ for (const d of drivers) {
   d.name=buildDriverName(d)||d.name;
 }
 localStorage.setItem(REGISTRY_KEY, JSON.stringify(drivers));
-localStorage.setItem(MODEL_COST_REPAIR_KEY, JSON.stringify({version:'5.6',at:new Date().toISOString(),count:modelCostsRepaired}));
+localStorage.setItem(MODEL_COST_REPAIR_KEY, JSON.stringify({version:'5.7',at:new Date().toISOString(),count:modelCostsRepaired}));
 function compactProfileLines(profile, limit=6){
   const p=profile||[];
   const lines=p.slice(0,limit).map((v,i)=>`Месяц ${i+1}: ${formatMoney(v)} ₽`);
@@ -666,6 +670,14 @@ function setLlmBusy(busy){
   const button=composer?.querySelector('button[type="submit"]');
   if(button){ button.disabled=busy; button.textContent=busy?'Думаю…':'Отправить'; }
   composer?.classList.toggle('is-loading',busy);
+}
+function cancelPendingLlm(){
+  llmRequestSeq++;
+  if(activeLlmController){
+    try{ activeLlmController.abort(); }catch{}
+    activeLlmController=null;
+  }
+  setLlmBusy(false);
 }
 function renderLlmSettings(){
   const status=document.getElementById('llmStatus');
@@ -709,7 +721,7 @@ function normalizeLlmData(data){
   if(typeof data?.segment==='string' && data.segment.trim()) out.segment=data.segment.trim();
   return out;
 }
-async function callOpenRouter(userText, candidate={}, expectedStep=''){
+async function callOpenRouter(userText, candidate={}, expectedStep='', signal=null){
   const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Извлекай параметры из сообщения пользователя и не выдумывай то, чего нет в тексте.
 
 Кандидаты показателя предварительно найдены retrieval-слоем: ${candidatePromptList(userText).indicators.join(', ') || 'нет уверенных кандидатов'}. Выбирай indicator только из этого короткого списка, если смысл однозначен. Если есть несколько близких показателей — indicator=null, чтобы приложение уточнило. Если подходящего показателя нет, верни формулировку пользователя как услышал — не подменяй её похожим показателем.
@@ -722,7 +734,8 @@ async function callOpenRouter(userText, candidate={}, expectedStep=''){
   const response=await fetch(LLM_API_URL,{
     method:'POST',
     headers:authHeaders({'Content-Type':'application/json'}),
-    body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:`Текущая карточка: ${current}\nОжидаемое поле: ${expectedStep||'не задано'}\n\nСообщение пользователя: ${userText}`} ]})
+    body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:`Текущая карточка: ${current}\nОжидаемое поле: ${expectedStep||'не задано'}\n\nСообщение пользователя: ${userText}`} ]}),
+    signal
   });
   const payload=await response.json().catch(()=>({}));
   if(response.status===401){ requireLogin(); throw new Error('Требуется вход'); }
@@ -752,10 +765,20 @@ function mergeLlmCandidate(data){
 async function processUserText(text){
   if(lastCreatedDriverId){ lastCreatedDriverId=null; renderContextActions(); }
   if(!flow){ const quick=detect(text); if(quick.productGroup){ startFlow(text); return; } }
+
+  // Один активный LLM-запрос за раз. Старый ответ не имеет права оживить
+  // уже завершённую/сброшенную сессию.
+  cancelPendingLlm();
+  const requestId=++llmRequestSeq;
+  const controller=new AbortController();
+  activeLlmController=controller;
+  const timeoutId=setTimeout(()=>controller.abort(), LLM_REQUEST_TIMEOUT_MS);
   setLlmBusy(true);
+
   try{
     const expectedStep=flow?.step||'';
-    const data=await callOpenRouter(text,flow?.candidate||{},expectedStep);
+    const data=await callOpenRouter(text,flow?.candidate||{},expectedStep,controller.signal);
+    if(requestId!==llmRequestSeq) return;
     if(!flow){
       flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',costMode:'',calcMethod:'',costProfile:[],costLogicText:'',costFormula:null,businessRationale:'',modelId:'',modelParams:null,plAllocations:[],incrementMode:'',channel:'',segment:'',status:'Черновик'},original:text};
     }
@@ -767,10 +790,18 @@ async function processUserText(text){
     flow.step=''; flow.options=[]; save();
     continueFlow();
   }catch(err){
+    if(requestId!==llmRequestSeq) return;
     console.warn('LLM fallback:',err);
-    // Для пользователя техническая ошибка LLM скрыта: продолжаем по детерминированным правилам.
+    // Таймаут/сбой внешней модели не блокирует пользователя: продолжаем
+    // по локальному retrieval и детерминированным бизнес-правилам.
     flow ? handleFlowAnswer(text) : startFlow(text);
-  }finally{ setLlmBusy(false); }
+  }finally{
+    clearTimeout(timeoutId);
+    if(requestId===llmRequestSeq){
+      activeLlmController=null;
+      setLlmBusy(false);
+    }
+  }
 }
 async function testLlmConnection(){
   const btn=document.getElementById('testLlm');
@@ -1461,6 +1492,7 @@ document.getElementById('runScaleTest')?.addEventListener('click',()=>{
   },20));
 });
 function endCurrentSession(){
+  cancelPendingLlm();
   const meaningful=messages.filter(m=>m.id!=='hello');
   if(meaningful.length){
     const history=load(SESSION_HISTORY_KEY,[]);
@@ -1479,6 +1511,7 @@ document.getElementById('endSession').addEventListener('click',()=>{
 
 document.getElementById('resetButton').addEventListener('click',()=>{
   if(!confirm('Сбросить реестр, диалог и незавершённое создание?'))return;
+  cancelPendingLlm();
   drivers=clone(seedDrivers);messages=clone(seedMessages);flow=null;indicatorRegistry=Object.entries(INDICATOR_META).map(([name,unit])=>({name,unit,status:'Активен'}));save();renderAll();toast('Демо-данные восстановлены');
 });
 

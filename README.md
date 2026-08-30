@@ -1,11 +1,3 @@
-# Driver Agent v5.9
+# Driver Agent v6.0
 
-LLM-first orchestration patch.
-
-- LLM is now the first interpreter of user text; local detection no longer intercepts product groups before the LLM call.
-- Retrieval still supplies a short candidate list to the LLM and validates against dictionaries.
-- Main LLM timeout increased to 30 seconds.
-- One automatic retry is made before local fallback.
-- Connection check now uses the same timeout/retry path as real requests and reports latency.
-- Settings include a compact diagnostic of the last LLM call (success / timeout / API/JSON error / fallback, latency, attempt).
-- Session cancellation still aborts in-flight requests and stale replies are ignored.
+Архитектура приведена к целевому workflow: LLM выполняет только INTERPRETING и возвращает сырой структурированный JSON. NORMALIZING выполняется детерминированным алгоритмом по справочникам. При неоднозначности пользователь выбирает вариант; при отсутствии показателя он подготавливается скрыто и драйвер уходит на согласование. Сохранены расчётные модели, P&L, проверка дублей, preview, статусы, LLM retry/timeout/fallback и диагностика.

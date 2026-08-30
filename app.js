@@ -639,7 +639,7 @@ for (const d of drivers) {
   d.name=buildDriverName(d)||d.name;
 }
 localStorage.setItem(REGISTRY_KEY, JSON.stringify(drivers));
-localStorage.setItem(MODEL_COST_REPAIR_KEY, JSON.stringify({version:'5.7',at:new Date().toISOString(),count:modelCostsRepaired}));
+localStorage.setItem(MODEL_COST_REPAIR_KEY, JSON.stringify({version:'6.0',at:new Date().toISOString(),count:modelCostsRepaired}));
 function compactProfileLines(profile, limit=6){
   const p=profile||[];
   const lines=p.slice(0,limit).map((v,i)=>`Месяц ${i+1}: ${formatMoney(v)} ₽`);
@@ -730,14 +730,20 @@ function normalizeLlmData(data){
   return out;
 }
 async function callOpenRouter(userText, candidate={}, expectedStep='', signal=null){
-  const system=`Ты — модуль понимания запроса для прототипа управления финансовыми драйверами. Извлекай параметры из сообщения пользователя и не выдумывай то, чего нет в тексте.
+  const system=`Ты — модуль INTERPRETING агента управления финансовыми драйверами. Твоя единственная задача — понять произвольный текст пользователя и вернуть структурированный JSON. НЕ сопоставляй значения со справочниками, НЕ нормализуй названия и НЕ выбирай ближайшие сущности.
 
-Кандидаты показателя предварительно найдены retrieval-слоем: ${candidatePromptList(userText).indicators.join(', ') || 'нет уверенных кандидатов'}. Выбирай indicator только из этого короткого списка, если смысл однозначен. Если есть несколько близких показателей — indicator=null, чтобы приложение уточнило. Если подходящего показателя нет, верни формулировку пользователя как услышал — не подменяй её похожим показателем.
-Кандидаты продукта предварительно найдены retrieval-слоем: ${candidatePromptList(userText).products.join(', ') || 'нет уверенных кандидатов'}. Выбирай product ТОЛЬКО из этого короткого списка и только если смысл однозначен. Если кандидатов нет или есть несколько правдоподобных вариантов — product=null. Не подменяй неизвестный продукт похожим. Если пользователь говорит только «кредиты», «кредит», «по кредитам» без конкретного вида кредита — product=null. Если говорит только «страховка», «страхование», «по страховкам» без конкретного страхового продукта — product=null.
-Тип эффекта: Доходы или Расходы. База расчёта: 1, 1000, 1000000 или 1000000000. Единицу измерения НЕ определяй: она является атрибутом показателя и берётся приложением только из справочника показателей.
-Кандидаты каналов: ${candidatePromptList(userText).channels.join(', ') || 'нет'}. Кандидаты сегментов: ${candidatePromptList(userText).segments.join(', ') || 'нет'}. Для канала и сегмента используй только найденный справочный вариант, если он явно назван пользователем; иначе null.
+Извлеки из текста бизнес-смысл как его сформулировал пользователь:
+- indicator — что измеряем / бизнес-показатель;
+- product — к какому продукту относится драйвер;
+- effectType — Доходы или Расходы, только если это явно следует из текста;
+- base — 1, 1000, 1000000 или 1000000000, только если явно указано;
+- cost — стоимость в рублях, если явно указана;
+- channel — канал, если назван;
+- segment — сегмент, если назван.
 
-Верни ТОЛЬКО один JSON-объект без markdown и пояснений с ключами: indicator, product, effectType, base, cost, channel, segment. Для неизвестных параметров ставь null. Если пользователь отвечает коротко на уточняющий вопрос, учитывай поле, которое сейчас ожидается. Стоимость верни числом/строкой в рублях без знака валюты.`;
+Если пользователь отвечает на уточняющий вопрос короткой фразой, учитывай поле «Ожидаемое поле». Не придумывай отсутствующие значения. Не исправляй «карты» на «Дебетовые карты» или «обороты» на справочное название — верни смысл максимально близко к словам пользователя. Единицу измерения не определяй.
+
+Верни ТОЛЬКО JSON без markdown с ключами: indicator, product, effectType, base, cost, channel, segment. Для неизвестных полей null.`;
   const current=JSON.stringify(candidate||{});
   const response=await fetch(LLM_API_URL,{
     method:'POST',
@@ -753,6 +759,45 @@ async function callOpenRouter(userText, candidate={}, expectedStep='', signal=nu
   const parsed=parseLooseLlmJson(content);
   if(!parsed) throw new Error('Не удалось разобрать ответ LLM');
   return normalizeLlmData(parsed);
+}
+
+function coreCatalogDecision(query, names, aliases={}, autoThreshold=0.88, clarifyThreshold=0.64){
+  const catalog=names.map((name,i)=>({id:`core-nsi-${i}`,name,aliases:aliases[name]||[]}));
+  const c=resolveCandidates(query,catalog,5,0.40);
+  if(!c.length) return {status:'none',candidates:[]};
+  const top=c[0], second=c[1];
+  if(top.score>=autoThreshold && (!second || top.score-second.score>=0.10)) return {status:'auto',value:top.entity.name,confidence:top.score,candidates:c};
+  if(top.score>=clarifyThreshold) return {status:'clarify',confidence:top.score,candidates:c.filter(x=>x.score>=Math.max(clarifyThreshold,top.score-0.14)).slice(0,5)};
+  return {status:'none',confidence:top.score,candidates:c};
+}
+function normalizeInterpretedData(data){
+  const out={...data};
+  // NORMALIZING: только алгоритм сопоставляет сырой JSON LLM с НСИ.
+  if(data.indicator){
+    const d=coreCatalogDecision(data.indicator, indicatorNames(), INDICATOR_ALIASES, 0.90, 0.68);
+    if(d.status==='auto') out.indicator=d.value;
+    else if(d.status==='clarify'){ out.indicator=null; out.indicatorChoices=d.candidates.map(x=>x.entity.name); out.indicatorMention=data.indicator; }
+    else { out.indicator=data.indicator; out.newIndicator=true; }
+  }
+  if(data.product){
+    const d=coreCatalogDecision(data.product, PRODUCTS, PRODUCT_ALIASES, 0.86, 0.64);
+    if(d.status==='auto') out.product=d.value;
+    else if(d.status==='clarify'){ out.product=null; out.productChoices=d.candidates.map(x=>x.entity.name); out.productMention=null; out.productGroup='ambiguous'; }
+    else { out.product=null; out.productMention=data.product; }
+  }
+  if(data.channel){
+    const d=coreCatalogDecision(data.channel, CORE_CHANNELS, {}, 0.88, 0.66);
+    if(d.status==='auto') out.channel=d.value;
+    else if(d.status==='clarify'){ out.channel=null; out.channelChoices=d.candidates.map(x=>x.entity.name); }
+    else out.channel=null;
+  }
+  if(data.segment){
+    const d=coreCatalogDecision(data.segment, CORE_SEGMENTS, {}, 0.88, 0.66);
+    if(d.status==='auto') out.segment=d.value;
+    else if(d.status==='clarify'){ out.segment=null; out.segmentChoices=d.candidates.map(x=>x.entity.name); }
+    else out.segment=null;
+  }
+  return out;
 }
 function mergeLlmCandidate(data){
   if(!flow) return;
@@ -824,8 +869,9 @@ async function processUserText(text){
     if(!flow){
       flow={step:'',candidate:{indicator:null,product:null,effectType:null,unit:null,base:'',cost:'',costMode:'',calcMethod:'',costProfile:[],costLogicText:'',costFormula:null,businessRationale:'',modelId:'',modelParams:null,plAllocations:[],incrementMode:'',channel:'',segment:'',status:'Черновик'},original:text};
     }
-    mergeLlmCandidate(data);
-    if(expectedStep && !data[expectedStep]){ handleFlowAnswer(text); return; }
+    const normalized=normalizeInterpretedData(data);
+    mergeLlmCandidate(normalized);
+    if(expectedStep && !normalized[expectedStep] && !normalized[`${expectedStep}Choices`]){ handleFlowAnswer(text); return; }
     flow.step=''; flow.options=[]; save();
     continueFlow();
   }catch(err){
@@ -942,6 +988,7 @@ function continueFlow() {
   // Сначала разрешаем уже обнаруженную неоднозначность продукта: это обязательная
   // сущность, и нет смысла собирать остальные параметры до её проверки.
   if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices);
+  if (!c.indicator && Array.isArray(c.indicatorChoices) && c.indicatorChoices.length) return ask('indicator','Уточни, что именно будем измерять.',c.indicatorChoices);
   if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS);
   if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS);
   if (!c.indicator) return ask('indicator', 'Что именно будем измерять?', indicatorNames());

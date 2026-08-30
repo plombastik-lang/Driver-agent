@@ -623,6 +623,49 @@ function parsePlArticles(text){
   for(const a of PL_ARTICLES) if(t.includes(normalizeText(a))&&!found.includes(a)) found.push(a);
   return found;
 }
+function relevantPlArticles(c){
+  const counts=new Map();
+  for(const d of drivers){
+    if(!c?.product || d.product!==c.product) continue;
+    for(const a of (d.plAllocations||[])) counts.set(a.article,(counts.get(a.article)||0)+1);
+  }
+  let ranked=[...counts.entries()].sort((a,b)=>b[1]-a[1]).map(x=>x[0]);
+  const income=['Чистый процентный доход','Чистый комиссионный доход','Операционные доходы','Прочие доходы'];
+  const expense=['Расходы на резервы','Прочие расходы'];
+  const fallback=c?.effectType==='Расходы'?expense:income;
+  for(const a of fallback) if(!ranked.includes(a)) ranked.push(a);
+  return ranked.slice(0,4);
+}
+function plCandidateCatalog(c){
+  const relevant=relevantPlArticles(c);
+  return [...relevant,...PL_ARTICLES.filter(x=>!relevant.includes(x))];
+}
+async function interpretPlArticles(text,c){
+  const local=parsePlArticles(text);
+  if(local.length) return local;
+  const candidates=plCandidateCatalog(c);
+  const system=`Ты помогаешь выбрать статьи P&L для финансового драйвера. Пользователь может назвать сокращения, разговорные названия или описать смысл. Выбирай ТОЛЬКО из переданного списка кандидатов. Верни ТОЛЬКО JSON вида {"articles":["точное название"]}. Можно вернуть несколько статей. Если уверенности нет — пустой массив. Не придумывай новые статьи.`;
+  const response=await fetch(LLM_API_URL,{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:`Продукт: ${c?.product||'—'}\nТип эффекта: ${c?.effectType||'—'}\nКандидаты: ${JSON.stringify(candidates)}\nЗапрос: ${text}`}]})});
+  const payload=await response.json().catch(()=>({}));
+  if(response.status===401){ requireLogin(); throw new Error('pl'); }
+  if(!response.ok) throw new Error('pl');
+  const content=payload?.choices?.[0]?.message?.content; if(!content) throw new Error('pl');
+  const data=JSON.parse(cleanJsonText(content));
+  const list=Array.isArray(data?.articles)?data.articles:[];
+  return list.map(x=>PL_ARTICLES.find(a=>normalizeText(a)===normalizeText(x))).filter(Boolean);
+}
+function applySelectedPlArticles(articles){
+  if(!flow) return;
+  const c=flow.candidate;
+  const uniq=[...new Set((articles||[]).filter(a=>PL_ARTICLES.includes(a)))];
+  if(!uniq.length) return false;
+  c.pendingPlArticles=uniq;
+  if(uniq.length===1){ c.plAllocations=[{article:uniq[0],profile:[...(c.costProfile||[])]}]; c.plSplitDone=true; }
+  else { c.plAllocations=[]; c.plSplitDone=false; }
+  flow.selectedPlArticles=[];
+  flow.step=''; flow.stepKind=''; flow.options=[]; save(); continueFlow();
+  return true;
+}
 function splitProfileByPercent(profile, articles, percents){
   return articles.map((article,i)=>({article,profile:(profile||[]).map(v=>moneyNumber(v)*(percents[i]/100))}));
 }
@@ -1055,7 +1098,7 @@ function shouldHandleFlowAnswerLocally(flowState){
   return new Set([
     'unitCustom','effectType','channel','segment','base','modelChoice','calcMethod',
     'modelAvgCheck','modelConversion','modelMargin','modelRisk','modelRepayment',
-    'modelHorizon','modelCreditTerm','costRule','costProfile','plArticle','formulaMonths','cost'
+    'modelHorizon','modelCreditTerm','costRule','costProfile','plArticle','plArticles','plSplitMode','plSplitPercent','formulaMonths','formulaConfirm','cost'
   ]).has(flowState.step);
 }
 async function processUserText(text){
@@ -1123,23 +1166,33 @@ async function testLlmConnection(){
   }
 }
 
-async function interpretCostLogic(text){
-  const system=`Ты переводишь описание бизнес-логики стоимости финансового драйвера в простую воспроизводимую формулу. Верни ТОЛЬКО JSON без markdown. Разрешённые типы:
+async function interpretCostLogic(text, previousFormula=null){
+  const system=`Ты — INTERPRETING для бизнес-правила расчёта стоимости драйвера. Ты НЕ считаешь профиль, а только переводишь свободный текст в структурированное правило. Чётко различай роли чисел: start/amount — денежное значение, percent — процент изменения, months — срок в месяцах. Не путай срок с начальным значением. Учитывай предыдущую формулу, если пользователь её корректирует.
+Верни ТОЛЬКО JSON без markdown. Разрешённые типы:
 - decay_percent: {type,start,percent,months}
 - growth_percent: {type,start,percent,months}
 - decrease_fixed: {type,start,amount,months}
 - increase_fixed: {type,start,amount,months}
 - constant: {type,amount,months}
 - two_stage: {type,firstAmount,firstMonths,secondAmount,secondMonths}
-Если срок не указан, months=null. Для two_stage сроки каждого этапа обязательны, иначе null. Добавь поля businessLogic — коротко по-русски, что означает формула, и businessRationale — короткий бизнес-смысл эффекта. Ничего не выдумывай.`;
-  const response=await fetch(LLM_API_URL,{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:text}]})});
-  const payload=await response.json().catch(()=>({}));
-  if(response.status===401){ requireLogin(); throw new Error('formula'); }
-  if(!response.ok) throw new Error('formula');
-  const content=payload?.choices?.[0]?.message?.content; if(!content) throw new Error('formula');
-  const data=JSON.parse(cleanJsonText(content));
-  if(!['decay_percent','growth_percent','decrease_fixed','increase_fixed','constant','two_stage'].includes(data.type)) throw new Error('formula');
-  return data;
+Если срок не указан, months=null. Для two_stage сроки каждого этапа обязательны. Не добавляй бизнес-смысл и не выполняй арифметику.`;
+  const user=`Предыдущая формула: ${previousFormula?JSON.stringify(previousFormula):'нет'}\nСообщение пользователя: ${text}`;
+  const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),LLM_REQUEST_TIMEOUT_MS);
+  try{
+    const response=await fetch(LLM_API_URL,{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:user}]}),signal:controller.signal});
+    const payload=await response.json().catch(()=>({}));
+    if(response.status===401){ requireLogin(); throw new Error('formula'); }
+    if(!response.ok) throw new Error('formula');
+    const content=payload?.choices?.[0]?.message?.content; if(!content) throw new Error('formula');
+    const data=JSON.parse(cleanJsonText(content));
+    if(!['decay_percent','growth_percent','decrease_fixed','increase_fixed','constant','two_stage'].includes(data.type)) throw new Error('formula');
+    const out={...(previousFormula||{}),type:data.type};
+    for(const k of ['start','percent','amount','months','firstAmount','firstMonths','secondAmount','secondMonths']) if(data[k]!==undefined && data[k]!==null && data[k]!=='') out[k]=moneyNumber(data[k]);
+    if('months' in out) out.months=Math.max(1,Math.min(36,Math.round(out.months)));
+    if('firstMonths' in out) out.firstMonths=Math.max(1,Math.min(36,Math.round(out.firstMonths)));
+    if('secondMonths' in out) out.secondMonths=Math.max(1,Math.min(36,Math.round(out.secondMonths)));
+    return out;
+  } finally { clearTimeout(timer); }
 }
 function localInterpretCostLogic(text){
   const raw=String(text); const t=normalizeText(raw);
@@ -1316,7 +1369,7 @@ ${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)} ${formatMoney(pro
   c.costMode='monthly';
   if(c.calcMethod==='rule' && !(c.costProfile||[]).length) return ask('costRule', `Опиши бизнес-логику обычным языком. Например: «10 000 ₽ в первый месяц, затем эффект растёт на 10% ежемесячно в течение 12 месяцев». Я отдельно определю начальное значение, изменение и срок, затем покажу, как понял правило.`);
   if(c.calcMethod==='manual' && !(c.costProfile||[]).length) return ask('costProfile', `Укажи стоимость вручную. Можно ввести одно значение или вставить помесячный профиль из Excel. В карточке каждое значение можно будет поправить отдельно.`);
-  if(!(c.plAllocations||[]).length) return ask('plArticles','На какие статьи P&L относится эффект? Можно выбрать одну или написать несколько, например «ЧПД и ЧКД».',PL_ARTICLES);
+  if(!(c.plAllocations||[]).length) return ask('plArticles','Выбери одну или несколько статей P&L. Сначала показываю наиболее релевантные для этого продукта. Можно также написать название обычным языком.',relevantPlArticles(c));
   if(c.pendingPlArticles?.length>1 && !c.plSplitDone) return ask('plSplitMode','Как распределить общую стоимость между статьями?',['Поровну','Указать доли']);
   showPreview();
 }
@@ -1363,7 +1416,7 @@ function handleFlowAnswer(text) {
       let f=null; try{ f=await interpretCostLogic(text); }catch{ f=localInterpretCostLogic(text); }
       if(!flow) return;
       if(!f){ flow.step='costRule'; save(); addMessage('agent','Не смог однозначно понять правило. Укажи начальное значение, как оно меняется и срок расчёта.'); renderContextActions(); return; }
-      c.costFormula=f; c.costLogicText=f.businessLogic||text; c.businessRationale=f.businessRationale||c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
+      c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f)||text; c.businessRationale=c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
       if(f.type!=='two_stage' && !f.months){ return ask('formulaMonths','На сколько месяцев применить это правило? Например: 12, 24 или 36.'); }
       const calculated=calculateProfile(f);
       if(!calculated.length){ flow.step='costRule'; addMessage('agent','Не получилось рассчитать профиль. Уточни правило и срок.'); renderContextActions(); return; }
@@ -1388,17 +1441,31 @@ ${compactProfileLines(calculated)}
     c.costProfile=profile; c.cost=String(profileTotal(profile)); c.costLogicText=profile.length===1?'Стоимость задана пользователем вручную одним значением.':'Профиль стоимости задан пользователем вручную по месяцам.'; c.businessRationale=c.businessRationale||'Стоимость драйвера определена бизнесом вручную.'; c.costFormula=null;
   }
   else if(flow.step==='formulaConfirm'){
-    // Любой текст на этапе подтверждения считаем корректировкой правила, а не переходом дальше.
-    const combined=`${c.costLogicText||flow.pendingCostLogic||''}. Уточнение пользователя: ${text}`;
-    c.costProfile=[]; c.cost=''; c.costFormula=null; c.costLogicText=''; flow.step='costRule'; save();
-    return handleFlowAnswer(combined);
+    const previous={...(c.costFormula||{})};
+    flow.step='formulaParsing'; save(); addMessage('agent','Понял корректировку. Пересчитываю правило…');
+    (async()=>{
+      let f=null; try{ f=await interpretCostLogic(text,previous); }catch{ f=null; }
+      if(!flow) return;
+      if(!f){ flow.step='formulaConfirm'; save(); addMessage('agent','Не смог однозначно применить корректировку. Напиши, что именно изменить: начальное значение, процент или срок.'); renderContextActions(); return; }
+      c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f); c.businessRationale=c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
+      if(f.type!=='two_stage' && !f.months){ flow.step='formulaMonths'; save(); return ask('formulaMonths','На сколько месяцев применить это правило?'); }
+      const calculated=calculateProfile(f); if(!calculated.length){ flow.step='formulaConfirm'; save(); addMessage('agent','Не получилось пересчитать профиль. Уточни правило.'); renderContextActions(); return; }
+      c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
+      addMessage('agent',`Теперь понял так:\n${monthlyFormulaLabel(f)}\n\n${compactProfileLines(calculated)}\n\nИтого за ${calculated.length} мес.: ${formatMoney(profileTotal(calculated))} ₽\n\nПодтвердить расчёт?`);
+      renderContextActions(); renderProgress();
+    })(); return;
   }
   else if(flow.step==='plArticles'){
-    const articles=parsePlArticles(text);
-    if(!articles.length){ addMessage('agent','Не смог распознать статью. Можно написать, например: «ЧПД», «ЧКД» или «ЧПД и ЧКД».'); return; }
-    c.pendingPlArticles=articles;
-    if(articles.length===1){ c.plAllocations=[{article:articles[0],profile:[...(c.costProfile||[])]}]; c.plSplitDone=true; }
-    else { c.plAllocations=[]; c.plSplitDone=false; }
+    const local=parsePlArticles(text);
+    if(local.length){ applySelectedPlArticles(local); return; }
+    flow.step='plParsing'; save(); addMessage('agent','Понял. Подбираю статьи…');
+    (async()=>{
+      let articles=[]; try{ articles=await interpretPlArticles(text,c); }catch{}
+      if(!flow) return;
+      if(!articles.length){ flow.step='plArticles'; save(); addMessage('agent','Не смог уверенно подобрать статьи. Выбери одну или несколько кнопками ниже.'); renderContextActions(); return; }
+      addMessage('agent',`Понял статьи: ${articles.map(shortArticleName).join(' + ')}.`);
+      applySelectedPlArticles(articles);
+    })(); return;
   }
   else if(flow.step==='plSplitMode'){
     const t=normalizeText(text); const arts=c.pendingPlArticles||[];
@@ -1511,6 +1578,10 @@ function renderContextActions() {
     el.innerHTML=`<button data-flow-action="createFromModel">Создать драйвер</button><button data-flow-action="redoModel" class="secondary">Параметры</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='formulaConfirm') {
     el.innerHTML=`<button data-flow-action="confirmFormula">✓ Подтвердить расчёт</button><button data-flow-action="redoFormula" class="secondary">Изменить логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='plArticles') {
+    const selected=new Set(flow.selectedPlArticles||[]);
+    const opts=(flow.options||relevantPlArticles(flow.candidate));
+    el.innerHTML=`<div class="multi-choice">${opts.map(o=>`<button type="button" data-pl-toggle="${escapeHtml(o)}" class="${selected.has(o)?'selected':''}">${escapeHtml(shortArticleName(o))}</button>`).join('')}</div><button data-flow-action="confirmPlArticles" class="${selected.size?'':'secondary'}">Продолжить${selected.size?` · ${selected.size}`:''}</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='preview') {
     el.innerHTML=`<button data-flow-action="confirm">✓ Создать</button><button data-flow-action="restart" class="secondary">Изменить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else {
@@ -1637,8 +1708,8 @@ function renderPlAllocationEditor(allocations=[]){
   const isComputed=method==='model'||method==='rule';
   const mobile=window.matchMedia('(max-width: 700px)').matches;
   if(mobile){
-    const cards=Array.from({length:months},(_,i)=>`<div class="pl-mobile-month ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><div class="pl-mobile-head"><strong>Месяц ${i+1}</strong><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></div>${list.map((a,idx)=>`<label class="pl-mobile-line"><span>${escapeHtml(shortArticleName(a.article))}</span>${isComputed?`<b>${compactRub(a.profile?.[i]??0)}</b>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</label>`).join('')}</div>`).join('');
-    el.innerHTML=`<div class="pl-mobile-list">${cards}</div><div class="pl-mobile-total"><span>Итого за профиль</span><strong>${compactRub(profileTotal(profileFromPlAllocations(list)))}</strong></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
+    const rows=Array.from({length:months},(_,i)=>`<tr class="pl-month-row ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><td>${i+1}</td>${list.map((a,idx)=>`<td>${isComputed?`<span class="pl-static">${compactRub(a.profile?.[i]??0)}</span>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</td>`).join('')}<td><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></td></tr>`).join('');
+    el.innerHTML=`<div class="pl-combined-wrap mobile"><table class="pl-combined pl-mobile-table ${isComputed?'model-table':''}"><thead><tr><th>Мес.</th>${list.map(a=>`<th title="${escapeHtml(a.article)}">${escapeHtml(shortArticleName(a.article))}</th>`).join('')}<th>Итого</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th>${list.map(a=>`<th>${compactRub(profileTotal(a.profile||[]))}</th>`).join('')}<th>${compactRub(profileTotal(profileFromPlAllocations(list)))}</th></tr></tfoot></table></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
   } else {
     const rows=Array.from({length:months},(_,i)=>`<tr class="pl-month-row ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><td>${i+1}</td>${list.map((a,idx)=>`<td>${isComputed?`<span class="pl-static">${compactRub(a.profile?.[i]??0)}</span>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</td>`).join('')}<td><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></td></tr>`).join('');
     el.innerHTML=`<div class="pl-combined-wrap"><table class="pl-combined ${isComputed?'model-table':''}"><thead><tr><th>Мес.</th>${list.map(a=>`<th title="${escapeHtml(a.article)}">${escapeHtml(shortArticleName(a.article))}</th>`).join('')}<th>Итого</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th>${list.map(a=>`<th>${compactRub(profileTotal(a.profile||[]))}</th>`).join('')}<th>${compactRub(profileTotal(profileFromPlAllocations(list)))}</th></tr></tfoot></table></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
@@ -1719,6 +1790,10 @@ document.getElementById('composer').addEventListener('submit',e=>{
   setTimeout(()=>processUserText(text),80);
 });
 document.getElementById('contextActions').addEventListener('click',e=>{
+  const plToggle=e.target.dataset.plToggle;
+  if(plToggle && flow?.step==='plArticles'){
+    const selected=new Set(flow.selectedPlArticles||[]); selected.has(plToggle)?selected.delete(plToggle):selected.add(plToggle); flow.selectedPlArticles=[...selected]; save(); renderContextActions(); return;
+  }
   const value=e.target.dataset.flowValue; const action=e.target.dataset.flowAction;
   if(value){ addMessage('user',value); handleFlowAnswer(value); return; }
   if(!action) return;
@@ -1737,6 +1812,7 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   } else if(actionLabels[action]) addMessage('user',actionLabels[action]);
 
   if(action==='cancel') cancelFlow();
+  else if(action==='confirmPlArticles'){ const arts=flow?.selectedPlArticles||[]; if(!arts.length){ toast('Выбери хотя бы одну статью'); return; } addMessage('user',arts.map(shortArticleName).join(' + ')); applySelectedPlArticles(arts); }
   else if(action==='confirm') finalizeDriver();
   else if(action==='differentAnalytics'){ flow.step='duplicateAnalytics'; save(); renderContextActions(); }
   else if(action==='changeProduct'){ flow.duplicateId=null; flow.duplicateChecked=false; flow.candidate.product=''; ask('product','Выбери другой продукт для нового драйвера.',PRODUCTS); }

@@ -1,18 +1,9 @@
-# Driver Agent v6.5
+# Driver Agent v6.6
 
-State-machine fix for INTERPRETING → CLARIFICATION → NORMALIZING → USER_CHOICE → RESOLVED.
-
-Key changes:
-- LLM only interprets free text into structured JSON.
-- Semantic sanity-check prevents indicator/product role swaps.
-- Generic “карты” resolves to a user choice between debit and credit cards.
-- Clarification returns to INTERPRETING with the current context.
-- Explicit USER_CHOICE bypasses LLM and writes the selected NSI entity directly.
-- Product/combination resolution completes before asking calculation parameters such as unit.
-- combinationId is created/resolved before duplicate checking.
-
-
-## v6.5 fixes
-- Fixed manual cost loop: operational answers no longer go through the main LLM interpreting path.
-- Added deterministic handling for manual cost, model parameters, credit term, P&L and other calculation inputs.
-- Restored a 6-stage progress bar with remaining-step indication.
+## Что изменено
+- Интерпретация произвольной логики стоимости: LLM → структурированная формула; calculation engine считает профиль детерминированно.
+- Корректировки правила в шаге подтверждения снова интерпретируются как изменение формулы, а не переход к следующему шагу.
+- P&L: множественный выбор кнопками, затем отдельная кнопка «Продолжить».
+- Для P&L сначала предлагаются статьи, уже использовавшиеся по выбранному продукту; затем релевантные по типу эффекта.
+- Текстовый ввод статей понимается локально по сокращениям, а при сложной формулировке используется LLM только для выбора из допустимого shortlist.
+- В карточке на мобильном P&L снова таблица: статьи в столбцах, «Итого» показывает общий эффект по каждому месяцу и за весь профиль.

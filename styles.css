@@ -228,3 +228,14 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
 .combination-dict-table td strong{display:block;line-height:1.25}.combination-dict-table td small{display:block;margin-top:4px;color:#7f8bad;font-size:9px}
 .pl-mobile-list{display:grid;gap:9px}.pl-mobile-month{border:1px solid #202b49;border-radius:13px;background:#0b1221;padding:10px}.pl-mobile-head{display:flex;justify-content:space-between;align-items:center;gap:12px;padding-bottom:8px;margin-bottom:4px;border-bottom:1px solid #202b49;font-size:12px}.pl-mobile-line{display:grid!important;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:10px;margin:0!important;padding:7px 0;border-bottom:1px solid rgba(32,43,73,.65)}.pl-mobile-line:last-child{border-bottom:0}.pl-mobile-line span{font-size:11px;color:#9aa6c6;min-width:0}.pl-mobile-line b{font-size:12px;white-space:nowrap}.pl-mobile-line input{width:112px!important;padding:8px!important;font-size:13px!important}.pl-mobile-total{display:flex;justify-content:space-between;gap:12px;padding:11px 2px 2px;font-size:12px;color:#9aa6c6}.pl-mobile-total strong{color:#fff;white-space:nowrap}
 @media(max-width:700px){.pl-combined-wrap{overflow:visible}.combination-dict-wrap{overflow:visible}.combination-dict-table{width:100%;font-size:.88rem}.combination-dict-table th,.combination-dict-table td{padding:9px 10px}.combination-dict-table th:last-child,.combination-dict-table td:last-child{width:92px}}
+/* v6.6: multi-select P&L + compact mobile P&L columns */
+.context-actions .multi-choice{display:flex;gap:7px;flex:0 0 auto}
+.context-actions .multi-choice button.selected{background:#6a5623;border-color:#d5ad45;color:#ffe8a5;box-shadow:inset 0 0 0 1px rgba(255,225,134,.2)}
+.pl-combined-wrap.mobile{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+.pl-mobile-table{width:100%;min-width:0;table-layout:fixed}
+.pl-mobile-table th,.pl-mobile-table td{padding:9px 4px;text-align:center;font-size:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pl-mobile-table th:first-child,.pl-mobile-table td:first-child{width:38px}
+.pl-mobile-table th:last-child,.pl-mobile-table td:last-child{width:58px}
+.pl-mobile-table input{width:100%;min-width:0;padding:6px 3px;font-size:10px;text-align:center}
+.pl-mobile-table .pl-static{font-size:10px}
+@media(max-width:380px){.pl-mobile-table th,.pl-mobile-table td{padding-left:2px;padding-right:2px;font-size:9px}.pl-mobile-table th:last-child,.pl-mobile-table td:last-child{width:52px}}

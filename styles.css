@@ -239,3 +239,18 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
 .pl-mobile-table input{width:100%;min-width:0;padding:6px 3px;font-size:10px;text-align:center}
 .pl-mobile-table .pl-static{font-size:10px}
 @media(max-width:380px){.pl-mobile-table th,.pl-mobile-table td{padding-left:2px;padding-right:2px;font-size:9px}.pl-mobile-table th:last-child,.pl-mobile-table td:last-child{width:52px}}
+
+/* v6.7 profile/P&L editor sync */
+.profile-row{grid-template-columns:42px 1fr 30px}
+.profile-delete,.pl-article-delete{appearance:none;border:1px solid #33405f;background:#111a2d;color:#aeb8d2;border-radius:9px;width:28px;height:28px;font-size:20px;line-height:1;display:grid;place-items:center;padding:0;cursor:pointer}
+.profile-delete:hover,.pl-article-delete:hover{border-color:#6b789a;color:#fff}
+.pl-article-controls{display:grid;gap:8px;margin:0 0 10px}
+.pl-article-control{display:grid;grid-template-columns:minmax(0,1fr) 32px;gap:8px;align-items:center}
+.pl-article-control select{width:100%;min-width:0;background:#0b1221;color:#fff;border:1px solid #2b3658;border-radius:10px;padding:9px 10px;font-size:13px}
+@media(max-width:700px){
+  .pl-combined.pl-mobile-table{min-width:0;width:100%;table-layout:fixed;font-size:.69rem}
+  .pl-combined.pl-mobile-table th,.pl-combined.pl-mobile-table td{padding:6px 2px;overflow:hidden}
+  .pl-combined.pl-mobile-table th:first-child,.pl-combined.pl-mobile-table td:first-child{width:32px}
+  .pl-combined.pl-mobile-table input{width:100%;min-width:0;padding:6px 3px!important;font-size:.70rem!important;text-align:right}
+  .pl-combined.pl-mobile-table th{white-space:normal;line-height:1.05}
+}

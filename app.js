@@ -1688,40 +1688,87 @@ function switchTab(name){
   document.querySelectorAll('.panel').forEach(x=>x.classList.toggle('active',x.id===name));
 }
 function getProfileFromEditor(){
-  return [...document.querySelectorAll('#editProfileGrid input[data-profile-month]')].map(x=>x.value.trim()).filter(v=>v!=='' && Number.isFinite(moneyNumber(v))).slice(0,36);
+  return [...document.querySelectorAll('#editProfileGrid input[data-profile-month]')].map(x=>x.value.trim()).slice(0,36);
 }
+function numericProfile(profile=[]){ return (profile||[]).map(v=>String(v).trim()===''?0:moneyNumber(v)); }
+function hasNonZeroEffect(profile=[]){ return numericProfile(profile).some(v=>Math.abs(v)>1e-9); }
 function renderProfileEditor(profile=[]){
   const grid=document.getElementById('editProfileGrid'); if(!grid) return;
   const values=(profile||[]).length ? profile : [''];
-  grid.innerHTML=values.map((v,i)=>`<label class="profile-row"><span>Месяц ${i+1}</span><input data-profile-month="${i}" inputmode="decimal" value="${escapeHtml(v)}" ${document.getElementById('editCalcMethod')?.value==='model'?'readonly':''} /></label>`).join('');
+  const readonly=document.getElementById('editCalcMethod')?.value==='model';
+  grid.innerHTML=values.map((v,i)=>`<label class="profile-row"><span>Месяц ${i+1}</span><input data-profile-month="${i}" inputmode="decimal" value="${escapeHtml(v)}" ${readonly?'readonly':''} />${readonly?'':`<button type="button" class="profile-delete" data-delete-profile-month="${i}" aria-label="Удалить месяц ${i+1}">×</button>`}</label>`).join('');
   grid.classList.add('collapsed');
   document.getElementById('toggleProfileRows').textContent=values.length>12?'Показать все':'Все месяцы показаны';
   document.getElementById('toggleProfileRows').hidden=values.length<=12;
   updateProfileTotal();
 }
+function plArticleOptions(selected=''){
+  const values=selected && !PL_ARTICLES.includes(selected)?[selected,...PL_ARTICLES]:PL_ARTICLES;
+  return `<option value="">Выбери статью</option>${values.map(x=>`<option value="${escapeHtml(x)}" ${x===selected?'selected':''}>${escapeHtml(x)}</option>`).join('')}`;
+}
+function normalizedAllocationsForMonths(allocations=[],months=1){
+  return (allocations||[]).map(a=>({article:a.article||'',profile:Array.from({length:months},(_,i)=>String(a.profile?.[i]??'0'))}));
+}
 function renderPlAllocationEditor(allocations=[]){
   const el=document.getElementById('editPlAllocations'); if(!el) return;
-  const list=(allocations||[]); if(!list.length){ el.innerHTML='<div class="empty">Статьи пока не заданы</div>'; return; }
-  const months=Math.max(...list.map(a=>(a.profile||[]).length),1);
-  const visible=Math.min(months,3);
   const method=document.getElementById('editCalcMethod')?.value;
   const isComputed=method==='model'||method==='rule';
+  const profileMonths=getProfileFromEditor().length;
+  const source=(allocations||[]);
+  if(!source.length){ el.innerHTML='<div class="empty">Статьи пока не заданы</div>'; return; }
+  const months=isComputed?Math.max(...source.map(a=>(a.profile||[]).length),1):Math.max(profileMonths,...source.map(a=>(a.profile||[]).length),1);
+  const list=normalizedAllocationsForMonths(source,months);
+  const visible=Math.min(months,3);
   const mobile=window.matchMedia('(max-width: 700px)').matches;
-  if(mobile){
-    const rows=Array.from({length:months},(_,i)=>`<tr class="pl-month-row ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><td>${i+1}</td>${list.map((a,idx)=>`<td>${isComputed?`<span class="pl-static">${compactRub(a.profile?.[i]??0)}</span>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</td>`).join('')}<td><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></td></tr>`).join('');
-    el.innerHTML=`<div class="pl-combined-wrap mobile"><table class="pl-combined pl-mobile-table ${isComputed?'model-table':''}"><thead><tr><th>Мес.</th>${list.map(a=>`<th title="${escapeHtml(a.article)}">${escapeHtml(shortArticleName(a.article))}</th>`).join('')}<th>Итого</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th>${list.map(a=>`<th>${compactRub(profileTotal(a.profile||[]))}</th>`).join('')}<th>${compactRub(profileTotal(profileFromPlAllocations(list)))}</th></tr></tfoot></table></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
-  } else {
-    const rows=Array.from({length:months},(_,i)=>`<tr class="pl-month-row ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><td>${i+1}</td>${list.map((a,idx)=>`<td>${isComputed?`<span class="pl-static">${compactRub(a.profile?.[i]??0)}</span>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</td>`).join('')}<td><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></td></tr>`).join('');
-    el.innerHTML=`<div class="pl-combined-wrap"><table class="pl-combined ${isComputed?'model-table':''}"><thead><tr><th>Мес.</th>${list.map(a=>`<th title="${escapeHtml(a.article)}">${escapeHtml(shortArticleName(a.article))}</th>`).join('')}<th>Итого</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th>${list.map(a=>`<th>${compactRub(profileTotal(a.profile||[]))}</th>`).join('')}<th>${compactRub(profileTotal(profileFromPlAllocations(list)))}</th></tr></tfoot></table></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
-  }
+  const articleControls=isComputed?'':`<div class="pl-article-controls">${list.map((a,idx)=>`<div class="pl-article-control"><select data-pl-article-index="${idx}" aria-label="Статья P&L ${idx+1}">${plArticleOptions(a.article)}</select><button type="button" class="pl-article-delete" data-delete-pl-article="${idx}" aria-label="Удалить статью">×</button></div>`).join('')}</div>`;
+  const rows=Array.from({length:months},(_,i)=>`<tr class="pl-month-row ${i>=visible?'extra-month':''}" ${i>=visible?'hidden':''}><td>${i+1}</td>${list.map((a,idx)=>`<td>${isComputed?`<span class="pl-static">${compactRub(a.profile?.[i]??0)}</span>`:`<input data-pl-row-index="${idx}" data-pl-month="${i}" inputmode="decimal" value="${escapeHtml(a.profile?.[i]??'0')}">`}</td>`).join('')}<td><strong>${compactRub(list.reduce((sum,a)=>sum+moneyNumber(a.profile?.[i]),0))}</strong></td></tr>`).join('');
+  el.innerHTML=`${articleControls}<div class="pl-combined-wrap ${mobile?'mobile':''}"><table class="pl-combined ${mobile?'pl-mobile-table':''} ${isComputed?'model-table':''}"><thead><tr><th>Мес.</th>${list.map(a=>`<th title="${escapeHtml(a.article)}">${escapeHtml(shortArticleName(a.article||'Статья'))}</th>`).join('')}<th>Итого</th></tr></thead><tbody>${rows}</tbody><tfoot><tr><th>Итого</th>${list.map(a=>`<th>${compactRub(profileTotal(a.profile||[]))}</th>`).join('')}<th>${compactRub(profileTotal(profileFromPlAllocations(list)))}</th></tr></tfoot></table></div>${months>visible?'<button type="button" class="secondary-button inline-button" id="togglePlMonths">Показать все месяцы</button>':''}`;
   document.getElementById('togglePlMonths')?.addEventListener('click',e=>{ const hidden=[...el.querySelectorAll('.extra-month')].some(r=>r.hidden); el.querySelectorAll('.extra-month').forEach(r=>r.hidden=!hidden); e.currentTarget.textContent=hidden?'Скрыть лишние месяцы':'Показать все месяцы'; });
 }
 
 function getPlAllocationsFromEditor(){
-  const id=document.getElementById('editId')?.value; const original=drivers.find(x=>x.id===id)?.plAllocations||[];
-  const headers=original.map(a=>a.article);
-  if(!headers.length) return [];
-  return headers.map((article,idx)=>({article,profile:[...document.querySelectorAll(`#editPlAllocations input[data-pl-row-index="${idx}"]`)].map(x=>x.value.trim()||'0')}));
+  const selects=[...document.querySelectorAll('#editPlAllocations select[data-pl-article-index]')];
+  const staticDriver=drivers.find(x=>x.id===document.getElementById('editId')?.value);
+  const fallback=(staticDriver?.plAllocations||[]).map(a=>a.article);
+  const count=Math.max(selects.length,fallback.length);
+  if(!count) return [];
+  return Array.from({length:count},(_,idx)=>{
+    const article=selects[idx]?.value ?? fallback[idx] ?? '';
+    const inputs=[...document.querySelectorAll(`#editPlAllocations input[data-pl-row-index="${idx}"]`)];
+    const profile=inputs.length?inputs.map(x=>x.value.trim()||'0'):[...(staticDriver?.plAllocations?.[idx]?.profile||[])];
+    return {article,profile};
+  });
+}
+function distributeTotalAcrossArticles(total, allocations, monthIndex){
+  const n=allocations.length; if(!n) return allocations;
+  let basis=allocations.map(a=>moneyNumber(a.profile?.[monthIndex]));
+  let basisTotal=basis.reduce((a,b)=>a+b,0);
+  if(Math.abs(basisTotal)<1e-9 && monthIndex>0){ basis=allocations.map(a=>moneyNumber(a.profile?.[monthIndex-1])); basisTotal=basis.reduce((a,b)=>a+b,0); }
+  const shares=Math.abs(basisTotal)>1e-9?basis.map(v=>v/basisTotal):Array(n).fill(1/n);
+  let used=0;
+  allocations.forEach((a,idx)=>{
+    if(!Array.isArray(a.profile)) a.profile=[];
+    const value=idx===n-1 ? total-used : Math.round(total*shares[idx]*100)/100;
+    a.profile[monthIndex]=String(Math.round(value*100)/100); used+=value;
+  });
+  return allocations;
+}
+function syncPlFromProfile(){
+  if(document.getElementById('editCalcMethod')?.value!=='manual') return;
+  const profile=getProfileFromEditor(); let allocations=getPlAllocationsFromEditor();
+  if(!allocations.length) return;
+  allocations=normalizedAllocationsForMonths(allocations,Math.max(1,profile.length));
+  profile.forEach((v,i)=>distributeTotalAcrossArticles(moneyNumber(v),allocations,i));
+  renderPlAllocationEditor(allocations);
+}
+function syncProfileFromPl(){
+  if(document.getElementById('editCalcMethod')?.value!=='manual') return;
+  const allocations=getPlAllocationsFromEditor(); if(!allocations.length) return;
+  const profile=profileFromPlAllocations(allocations);
+  const inputs=[...document.querySelectorAll('#editProfileGrid input[data-profile-month]')];
+  if(profile.length!==inputs.length){ renderProfileEditor(profile.map(String)); }
+  else inputs.forEach((input,i)=>{ input.value=String(Math.round(moneyNumber(profile[i])*100)/100); });
+  updateProfileTotal();
 }
 function profileFromPlAllocations(allocations=[]){
   const months=Math.max(0,...allocations.map(a=>(a.profile||[]).length));
@@ -1857,7 +1904,7 @@ document.getElementById('driverList').addEventListener('click',e=>{
 document.getElementById('backToRegistry').addEventListener('click',closeDriver);
 document.getElementById('approveDriver').addEventListener('click',()=>{
   const id=document.getElementById('editId').value; const d=drivers.find(x=>x.id===id); if(!d)return;
-  if(!String(d.cost||'').trim()){ toast('Сначала укажи стоимость'); return; }
+  if(!hasNonZeroEffect(d.costProfile||[d.cost])){ toast('Стоимость драйвера не может быть 0 ₽'); return; }
   d.status='Готов';
   const ind=indicatorRecord(d.indicator); if(ind && ind.status==='Подготовлен') ind.status='Активен';
   const combo=combinationRegistry.find(x=>x.id===d.combinationId); if(combo && combo.status==='Подготовлена') combo.status='Активна';
@@ -1869,11 +1916,18 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
   const monthly=true;
   let costProfile=getProfileFromEditor();
   let editedAllocations=getPlAllocationsFromEditor();
+  if(calcMethod==='manual'){
+    if(costProfile.some(v=>String(v).trim()==='')){ toast('Заполни стоимость месяца или удали пустой месяц'); return; }
+    if(!hasNonZeroEffect(costProfile)){ toast('Стоимость драйвера не может быть 0 ₽'); return; }
+    if(editedAllocations.some(a=>!a.article)){ toast('Выбери статью P&L или удали пустую статью'); return; }
+    const articleNames=editedAllocations.map(a=>a.article);
+    if(new Set(articleNames).size!==articleNames.length){ toast('Одна статья P&L выбрана несколько раз'); return; }
+  }
   if((calcMethod==='model'||calcMethod==='rule') && !editedAllocations.length) editedAllocations=d.plAllocations||[];
   if(editedAllocations.length) costProfile=profileFromPlAllocations(editedAllocations);
   const cost=costProfile.length?String(profileTotal(costProfile)):document.getElementById('editCost').value.trim();
   const status=document.getElementById('editStatus').value;
-  if(status==='Готов' && !cost){ toast('Сначала укажи стоимость'); return; }
+  if(status==='Готов' && !hasNonZeroEffect(costProfile.length?costProfile:[cost])){ toast('Стоимость драйвера не может быть 0 ₽'); return; }
   const selectedUnit=document.getElementById('editUnit').value;
   const unit=selectedUnit==='other' ? document.getElementById('editUnitOther').value.trim() : selectedUnit;
   if(!unit){ toast('Укажи единицу измерения'); return; }
@@ -1932,12 +1986,30 @@ document.getElementById('editCreditTermYears')?.addEventListener('input',()=>{
   const term=moneyNumber(document.getElementById('editCreditTermYears').value);
   document.getElementById('editHorizon').value=term?Math.min(36,Math.round(term*12)):'';
 });
-document.getElementById('addPlArticle').addEventListener('click',()=>{ const current=getPlAllocationsFromEditor(); const months=Math.max(1,getProfileFromEditor().length); current.push({article:'',profile:Array(months).fill('0')}); renderPlAllocationEditor(current); });
-document.getElementById('editPlAllocations').addEventListener('input',updatePlSummary);
+document.getElementById('addPlArticle').addEventListener('click',()=>{
+  const current=getPlAllocationsFromEditor(); const months=Math.max(1,getProfileFromEditor().length);
+  if(current.length>=PL_ARTICLES.length){ toast('Все доступные статьи уже добавлены'); return; }
+  current.push({article:'',profile:Array(months).fill('0')}); renderPlAllocationEditor(current);
+});
+document.getElementById('editPlAllocations').addEventListener('input',e=>{ if(e.target.matches('input[data-pl-row-index]')) syncProfileFromPl(); updatePlSummary(); });
+document.getElementById('editPlAllocations').addEventListener('change',e=>{
+  if(e.target.matches('select[data-pl-article-index]')){ const current=getPlAllocationsFromEditor(); renderPlAllocationEditor(current); }
+});
+document.getElementById('editPlAllocations').addEventListener('click',e=>{
+  const btn=e.target.closest('[data-delete-pl-article]'); if(!btn)return;
+  const idx=Number(btn.dataset.deletePlArticle); const current=getPlAllocationsFromEditor(); current.splice(idx,1); renderPlAllocationEditor(current); syncProfileFromPl();
+});
 
-document.getElementById('editProfileGrid').addEventListener('input',updateProfileTotal);
+document.getElementById('editProfileGrid').addEventListener('input',e=>{ if(e.target.matches('input[data-profile-month]')){ updateProfileTotal(); syncPlFromProfile(); } });
+document.getElementById('editProfileGrid').addEventListener('click',e=>{
+  const btn=e.target.closest('[data-delete-profile-month]'); if(!btn)return;
+  const idx=Number(btn.dataset.deleteProfileMonth); let profile=getProfileFromEditor(); profile.splice(idx,1);
+  let allocations=getPlAllocationsFromEditor(); allocations.forEach(a=>a.profile?.splice(idx,1));
+  renderProfileEditor(profile); if(allocations.length) renderPlAllocationEditor(allocations);
+});
 document.getElementById('addProfileMonth').addEventListener('click',()=>{
   const p=getProfileFromEditor(); if(p.length>=36){toast('Максимум 36 месяцев');return;} p.push(''); renderProfileEditor(p);
+  const allocations=getPlAllocationsFromEditor(); if(allocations.length){ allocations.forEach(a=>a.profile.push('0')); renderPlAllocationEditor(allocations); }
 });
 document.getElementById('toggleProfileRows').addEventListener('click',()=>{
   const grid=document.getElementById('editProfileGrid'); grid.classList.toggle('collapsed'); document.getElementById('toggleProfileRows').textContent=grid.classList.contains('collapsed')?'Показать все':'Свернуть';

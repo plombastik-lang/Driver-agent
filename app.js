@@ -583,18 +583,54 @@ function incrementModeDescription(v){
 function isPlArticle(value){ return PL_ARTICLES.some(x=>analyticsKey(x)===analyticsKey(value)); }
 function similarDrivers(c) {
   if (!c.indicator && !c.product) return [];
-  const matches=drivers.map(d=>{
+  // Продукт/комбинация — gate: не показываем аналоги из других продуктов.
+  // Если выбран продукт, похожесть считаем только внутри него.
+  const pool=c.product ? drivers.filter(d=>d.product===c.product) : drivers;
+  const matches=pool.map(d=>{
     const sameIndicator=!!c.indicator && d.indicator===c.indicator;
-    const sameProduct=!!c.product && d.product===c.product;
-    const score=sameIndicator&&sameProduct?3:sameIndicator?2:sameProduct?1:0;
-    return {d,score,sameIndicator,sameProduct};
-  }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score);
+    const sameCombination=!!c.combinationId && combinationKeyOf(d)===combinationKeyOf(c);
+    const score=sameCombination&&sameIndicator?4:sameIndicator?3:sameCombination?2:1;
+    return {d,score,sameIndicator,sameCombination};
+  }).filter(x=>x.sameIndicator || x.sameCombination).sort((a,b)=>b.score-a.score);
   if(!matches.length) return [];
   const bestScore=matches[0].score;
-  // Не перегружаем пользователя менее релевантными аналогами, если есть более близкие совпадения.
   return matches.filter(x=>x.score===bestScore).slice(0,3);
 }
-function similarKind(x){ return x.score===3?'Максимально похожий':x.score===2?'Похожий драйвер':'Аналог по продукту'; }
+function similarKind(x){ return x.score>=4?'Максимально похожий':x.score===3?'Похожий показатель по продукту':'Аналог по комбинации'; }
+function inferEffectType(c){
+  const t=normalizeText([c?.indicator,c?.original,flow?.original].filter(Boolean).join(' '));
+  if(/сокращ|эконом|не найм|ненайм|снижен.*затрат|оптимизац.*расход|пше/.test(t)) return {value:'Расходы',confidence:.95};
+  if(/выдач|продаж|клиент|оборот|сбор|доля рынка|проникнов|конверс|выруч|доход/.test(t)) return {value:'Доходы',confidence:.9};
+  return {value:null,confidence:0};
+}
+function defaultBaseForCandidate(c){
+  if(c?.unit==='шт.') return '1';
+  if(c?.unit==='₽') return '1000000';
+  if(c?.unit==='%') return '1';
+  return '';
+}
+function parsePlArticles(text){
+  const t=normalizeText(text);
+  const aliases=[
+    ['Чистый процентный доход',/чпд|процентн.*доход/],
+    ['Чистый комиссионный доход',/чкд|комиссионн.*доход/],
+    ['Расходы на резервы',/резерв/],
+    ['Операционные доходы',/операционн.*доход/],
+    ['Прочие доходы',/проч.*доход/],
+    ['Прочие расходы',/проч.*расход/]
+  ];
+  const found=aliases.filter(([,re])=>re.test(t)).map(([name])=>name);
+  for(const a of PL_ARTICLES) if(t.includes(normalizeText(a))&&!found.includes(a)) found.push(a);
+  return found;
+}
+function splitProfileByPercent(profile, articles, percents){
+  return articles.map((article,i)=>({article,profile:(profile||[]).map(v=>moneyNumber(v)*(percents[i]/100))}));
+}
+function parsePercents(text,n){
+  const vals=[...String(text).matchAll(/(\d+(?:[.,]\d+)?)\s*%/g)].map(m=>moneyNumber(m[1]));
+  if(vals.length===n && Math.abs(vals.reduce((a,b)=>a+b,0)-100)<.01) return vals;
+  return null;
+}
 function moneyNumber(v){ const n=Number(String(v??'').replace(/\s/g,'').replace(',','.')); return Number.isFinite(n)?n:0; }
 function formatMoney(v){ return new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}).format(moneyNumber(v)); }
 function profileTotal(profile){ return (profile||[]).reduce((sum,v)=>sum+moneyNumber(v),0); }
@@ -1106,9 +1142,19 @@ async function interpretCostLogic(text){
   return data;
 }
 function localInterpretCostLogic(text){
-  const t=normalizeText(text); const nums=[...String(text).matchAll(/(\d[\d\s]*(?:[.,]\d+)?)/g)].map(m=>moneyNumber(m[1]));
-  const pct=String(text).match(/(\d+(?:[.,]\d+)?)\s*%/); const months=String(text).match(/(\d+)\s*(?:месяц|месяц[а-я]*|мес\.?)/i);
-  if(nums.length && pct){ const isGrow=/рост|увелич|прибав|раст/i.test(text); return {type:isGrow?'growth_percent':'decay_percent',start:nums[0],percent:moneyNumber(pct[1]),months:months?Number(months[1]):null,businessLogic:String(text).trim()}; }
+  const raw=String(text); const t=normalizeText(raw);
+  const pctMatch=raw.match(/(?:на|рост|раст[её]т|увелич[^0-9]*)\s*(\d+(?:[.,]\d+)?)\s*%/i) || raw.match(/(\d+(?:[.,]\d+)?)\s*%/);
+  const monthMatch=raw.match(/(?:в течение|на срок|срок[^0-9]*)\s*(\d+)\s*(?:месяц|мес)/i) || raw.match(/(\d+)\s*(?:месяц|мес)/i);
+  const firstMatch=raw.match(/(?:перв(?:ый|ом)\s+месяц[^0-9]*|сначала[^0-9]*|старт[^0-9]*)(\d[\d\s]*(?:[.,]\d+)?)/i);
+  const all=[...raw.matchAll(/(\d[\d\s]*(?:[.,]\d+)?)/g)].map(m=>moneyNumber(m[1]));
+  const percent=pctMatch?moneyNumber(pctMatch[1]):null;
+  const months=monthMatch?Number(monthMatch[1]):null;
+  let start=firstMatch?moneyNumber(firstMatch[1]):null;
+  if(start===null){ start=all.find(v=>v!==percent && v!==months) ?? all[0] ?? null; }
+  if(start!==null && percent!==null){
+    const isGrow=/рост|раст|увелич|прибав|\+/.test(t) && !/уменьш|сниж|пад/.test(t);
+    return {type:isGrow?'growth_percent':'decay_percent',start,percent,months,businessLogic:`${formatMoney(start)} ₽ в первый месяц, далее ${isGrow?'рост':'снижение'} на ${percent}% ежемесячно${months?` в течение ${months} мес.`:''}`,businessRationale:'Эффект меняется ежемесячно по заданному бизнесом правилу.'};
+  }
   return null;
 }
 
@@ -1218,7 +1264,11 @@ function continueFlow() {
     c.effectType=model.effectType;
     save();
   }
-  if (!c.effectType) return ask('effectType', 'Какой тип эффекта у драйвера?', ['Доходы','Расходы']);
+  if (!c.effectType){
+    const inferred=inferEffectType(c);
+    if(inferred.confidence>=.85){ c.effectType=inferred.value; save(); }
+    else return ask('effectType', 'Не уверен, как эффект влияет на финансовый результат. Это доходы или расходы?', ['Доходы','Расходы']);
+  }
 
   if(!c.calcMethod && model){
     flow.step='modelChoice'; flow.modelId=model.id; save();
@@ -1226,8 +1276,8 @@ function continueFlow() {
     addMessage('agent', `Для этого драйвера есть модель «${model.title}». Рассчитать стоимость?`);
     renderContextActions(); renderProgress(); return;
   }
-  if(c.calcMethod==='model' && !c.base){ c.base=defaultModelBase(c,model); save(); }
-  if (!c.base) return ask('base', 'Выбери базу, для которой рассчитываем эффект.', ['1','1 000','1 млн','1 млрд']);
+  if(!c.base){ c.base=c.calcMethod==='model'?defaultModelBase(c,model):defaultBaseForCandidate(c); if(c.base) save(); }
+  if (!c.base) return ask('base', 'Для нестандартной единицы нужна база расчёта. Выбери её.', ['1','1 000','1 млн','1 млрд']);
 
   if(c.calcMethod==='model'){
     c.costMode='monthly'; c.modelId=c.modelId||flow.modelId||model?.id||'credit_income_v2'; c.modelParams=c.modelParams||defaultModelParams(c,model);
@@ -1264,9 +1314,10 @@ ${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)} ${formatMoney(pro
 
   if(!c.calcMethod) return ask('calcMethod','Готовой модели для этого драйвера пока нет. Как удобнее определить стоимость?',['Описать правило','Ручной ввод']);
   c.costMode='monthly';
-  if(c.calcMethod==='rule' && !(c.costProfile||[]).length) return ask('costRule', `Опиши бизнес-логику обычным языком. Например: «10 000 ₽ в первый месяц, затем эффект уменьшается на 7% ежемесячно в течение 12 месяцев». Я сначала покажу, как понял правило, а затем рассчитаю профиль.`);
+  if(c.calcMethod==='rule' && !(c.costProfile||[]).length) return ask('costRule', `Опиши бизнес-логику обычным языком. Например: «10 000 ₽ в первый месяц, затем эффект растёт на 10% ежемесячно в течение 12 месяцев». Я отдельно определю начальное значение, изменение и срок, затем покажу, как понял правило.`);
   if(c.calcMethod==='manual' && !(c.costProfile||[]).length) return ask('costProfile', `Укажи стоимость вручную. Можно ввести одно значение или вставить помесячный профиль из Excel. В карточке каждое значение можно будет поправить отдельно.`);
-  if(!(c.plAllocations||[]).length) return ask('plArticle','На какую статью P&L относится рассчитанный эффект?',PL_ARTICLES);
+  if(!(c.plAllocations||[]).length) return ask('plArticles','На какие статьи P&L относится эффект? Можно выбрать одну или написать несколько, например «ЧПД и ЧКД».',PL_ARTICLES);
+  if(c.pendingPlArticles?.length>1 && !c.plSplitDone) return ask('plSplitMode','Как распределить общую стоимость между статьями?',['Поровну','Указать доли']);
   showPreview();
 }
 function ask(step, text, options=[], kind='') {
@@ -1335,6 +1386,29 @@ ${compactProfileLines(calculated)}
     if(!profile.length){addMessage('agent','Не смог разобрать значения. Вставь числа из Excel или перечисли их через точку с запятой.');return;}
     if(profile.length>36){addMessage('agent','Можно указать максимум 36 месяцев.');return;}
     c.costProfile=profile; c.cost=String(profileTotal(profile)); c.costLogicText=profile.length===1?'Стоимость задана пользователем вручную одним значением.':'Профиль стоимости задан пользователем вручную по месяцам.'; c.businessRationale=c.businessRationale||'Стоимость драйвера определена бизнесом вручную.'; c.costFormula=null;
+  }
+  else if(flow.step==='formulaConfirm'){
+    // Любой текст на этапе подтверждения считаем корректировкой правила, а не переходом дальше.
+    const combined=`${c.costLogicText||flow.pendingCostLogic||''}. Уточнение пользователя: ${text}`;
+    c.costProfile=[]; c.cost=''; c.costFormula=null; c.costLogicText=''; flow.step='costRule'; save();
+    return handleFlowAnswer(combined);
+  }
+  else if(flow.step==='plArticles'){
+    const articles=parsePlArticles(text);
+    if(!articles.length){ addMessage('agent','Не смог распознать статью. Можно написать, например: «ЧПД», «ЧКД» или «ЧПД и ЧКД».'); return; }
+    c.pendingPlArticles=articles;
+    if(articles.length===1){ c.plAllocations=[{article:articles[0],profile:[...(c.costProfile||[])]}]; c.plSplitDone=true; }
+    else { c.plAllocations=[]; c.plSplitDone=false; }
+  }
+  else if(flow.step==='plSplitMode'){
+    const t=normalizeText(text); const arts=c.pendingPlArticles||[];
+    if(t.includes('поровну')){ const pct=100/arts.length; c.plAllocations=splitProfileByPercent(c.costProfile,arts,arts.map(()=>pct)); c.plSplitDone=true; }
+    else return ask('plSplitPercent',`Укажи доли для статей в том же порядке: ${arts.join(' / ')}. Например: «70% / 30%».`);
+  }
+  else if(flow.step==='plSplitPercent'){
+    const arts=c.pendingPlArticles||[]; const pct=parsePercents(text,arts.length);
+    if(!pct){ addMessage('agent',`Нужно указать ${arts.length} доли в процентах, сумма должна быть 100%.`); return; }
+    c.plAllocations=splitProfileByPercent(c.costProfile,arts,pct); c.plSplitDone=true;
   }
   else if(flow.step==='plArticle'){ const article=String(text).trim(); c.plAllocations=[{article,profile:[...(c.costProfile||[])]}]; }
   else if (flow.step === 'formulaMonths') {
@@ -1452,7 +1526,7 @@ function flowProgressStage(){
     return {stage:2,total:6,label:'Уточняю данные'};
   if(['duplicate','duplicateAnalytics','similar'].includes(step) || !flow.duplicateChecked)
     return {stage:3,total:6,label:'Проверяю реестр'};
-  if(['modelChoice','calcMethod','modelAvgCheck','modelConversion','modelMargin','modelRisk','modelRepayment','modelHorizon','modelCreditTerm','costRule','formulaMonths','formulaConfirm','costProfile','cost','base','effectType','plArticle','modelResult','modelDetails'].includes(step) || !(c.costProfile||[]).length)
+  if(['modelChoice','calcMethod','modelAvgCheck','modelConversion','modelMargin','modelRisk','modelRepayment','modelHorizon','modelCreditTerm','costRule','formulaMonths','formulaConfirm','costProfile','cost','base','effectType','plArticle','plArticles','plSplitMode','plSplitPercent','modelResult','modelDetails'].includes(step) || !(c.costProfile||[]).length)
     return {stage:4,total:6,label:'Определяю стоимость'};
   if(step==='preview') return {stage:5,total:6,label:'Проверяю результат'};
   return {stage:5,total:6,label:'Готовлю создание'};

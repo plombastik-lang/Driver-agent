@@ -1748,7 +1748,9 @@ function renderContextActions() {
   } else if (flow.step==='plArticles') {
     const selected=new Set(flow.selectedPlArticles||[]);
     const opts=(flow.options||relevantPlArticles(flow.candidate));
-    el.innerHTML=`<div class="multi-choice">${opts.map(o=>`<button type="button" data-pl-toggle="${escapeHtml(o)}" class="${selected.has(o)?'selected':''}">${escapeHtml(fullArticleChoiceLabel(o))}</button>`).join('')}</div><button data-flow-action="confirmPlArticles" class="${selected.size?'':'secondary'}">Продолжить${selected.size?` · ${selected.size}`:''}</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+    const count=selected.size;
+    const countLabel=count===1?'выбрана 1 статья':`выбрано ${count} статьи`;
+    el.innerHTML=`<div class="pl-choice-block"><div class="multi-choice">${opts.map(o=>{const isSelected=selected.has(o);return `<button type="button" data-pl-toggle="${escapeHtml(o)}" class="${isSelected?'selected':''}" aria-pressed="${isSelected?'true':'false'}">${isSelected?'<span class="choice-check">✓</span> ':''}${escapeHtml(fullArticleChoiceLabel(o))}</button>`}).join('')}</div>${count?`<button data-flow-action="confirmPlArticles" class="pl-confirm">Продолжить · ${countLabel}</button>`:''}</div><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='preview') {
     el.innerHTML=`<button data-flow-action="confirm">✓ Создать</button><button data-flow-action="editMenu" class="secondary">Изменить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='editMenu') {
@@ -2041,7 +2043,7 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   const actionLabels={
     cancel:'Отмена', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
     continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', createFromModel:'Создать драйвер', startCost:'Определить стоимость', viewModelCalc:'Посмотреть расчёт',
-    redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить', editMenu:'Изменить', editPl:'Статьи P&L', editCost:'Стоимость / расчёт', editAnalytics:'Аналитики', editDriverDefinition:'Показатель / продукт', backPreview:'Назад', confirmCandidates:'Подтвердить выбор'
+    redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить', editMenu:'Изменить', editPl:'Статьи P&L', editCost:'Стоимость / расчёт', editAnalytics:'Аналитики', editDriverDefinition:'Показатель / продукт', backPreview:'Назад', confirmCandidates:'Подтвердить выбор', confirmPlArticles:'Продолжить с выбранными статьями'
   };
   if(action==='useSimilar'){
     const d=drivers.find(x=>x.id===e.target.dataset.driverId); addMessage('user',d?`Использовать «${d.name}»`:'Использовать найденный драйвер');

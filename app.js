@@ -696,10 +696,20 @@ function applySelectedPlArticles(articles){
   const uniq=[...new Set((articles||[]).filter(a=>PL_ARTICLES.includes(a) && plArticleMatchesEffect(a,c.effectType)))];
   if(!uniq.length) return false;
   c.pendingPlArticles=uniq;
-  if(uniq.length===1){ c.plAllocations=[{article:uniq[0],profile:[...(c.costProfile||[])]}]; c.plSplitDone=true; }
-  else { c.plAllocations=[]; c.plSplitDone=false; }
   flow.selectedPlArticles=[];
-  flow.step=''; flow.stepKind=''; flow.options=[]; save(); continueFlow();
+  flow.uiExpandedPl=false;
+  flow.stepKind=''; flow.options=[];
+  if(uniq.length===1){
+    c.plAllocations=[{article:uniq[0],profile:[...(c.costProfile||[])]}];
+    c.plSplitDone=true;
+    flow.step=''; save(); continueFlow();
+  } else {
+    // Multi-select is already a confirmed user action. Do not send it back through
+    // the P&L picker; go directly to allocation of the selected articles.
+    c.plAllocations=[]; c.plSplitDone=false;
+    flow.step=''; save();
+    ask('plSplitMode',`Выбрано статей: ${uniq.length}. Как распределить общую стоимость между ними?`,['Поровну','Указать доли']);
+  }
   return true;
 }
 function splitProfileByPercent(profile, articles, percents){
@@ -1465,8 +1475,8 @@ ${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)} ${formatMoney(pro
   c.costMode='monthly';
   if(c.calcMethod==='rule' && !(c.costProfile||[]).length) return ask('costRule', `Опиши, как изменение показателя превращается именно в финансовый эффект P&L. Можно писать параметры в любом порядке — я буду собирать их в текущий расчёт. Например: «на 1 млн ₽ объёма выдач ЧКД 20 тыс. ₽ ежемесячно 12 месяцев». Если формула рассчитывает только сам показатель, я это отмечу и попрошу продолжить до P&L.`);
   if(c.calcMethod==='manual' && !(c.costProfile||[]).length) return ask('costProfile', `Укажи стоимость вручную. Можно ввести одно значение или вставить помесячный профиль из Excel. В карточке каждое значение можно будет поправить отдельно.`);
-  if(!(c.plAllocations||[]).length) return ask('plArticles','Выбери одну или несколько статей P&L. Сначала показываю наиболее релевантные для этого продукта. Можно также написать название обычным языком.',relevantPlArticles(c));
   if(c.pendingPlArticles?.length>1 && !c.plSplitDone) return ask('plSplitMode','Как распределить общую стоимость между статьями?',['Поровну','Указать доли']);
+  if(!(c.plAllocations||[]).length) return ask('plArticles','Выбери одну или несколько статей P&L. Сначала показываю наиболее релевантные для этого продукта. Можно также написать название обычным языком.',relevantPlArticles(c));
   showPreview();
 }
 function ask(step, text, options=[], kind='') {
@@ -1723,10 +1733,13 @@ function renderContextActions() {
     const indicatorOptions=Array.isArray(c.indicatorChoices)?c.indicatorChoices:[];
     const productOptions=Array.isArray(c.productChoices)?c.productChoices:[];
     const ready=!!sel.indicator && !!sel.product;
-    el.innerHTML=`<div class="candidate-resolution">
-      <div class="candidate-group"><span class="candidate-group-title">Похожие показатели</span><div class="multi-choice">${indicatorOptions.map(o=>`<button type="button" data-resolve-type="indicator" data-resolve-value="${escapeHtml(o)}" class="${sel.indicator===o?'selected':''}">${escapeHtml(o)}</button>`).join('')}</div></div>
-      <div class="candidate-group"><span class="candidate-group-title">Похожие продукты</span><div class="multi-choice">${productOptions.map(o=>`<button type="button" data-resolve-type="product" data-resolve-value="${escapeHtml(o)}" class="${sel.product===o?'selected':''}">${escapeHtml(o)}</button>`).join('')}</div></div>
-    </div><button data-flow-action="confirmCandidates" class="${ready?'':'secondary'}">Продолжить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+    const renderCandidateGroup=(type,title,options)=>{
+      const expanded=!!(flow.uiExpandedCandidates||{})[type];
+      const visible=expanded?options:options.slice(0,3);
+      const more=Math.max(0,options.length-visible.length);
+      return `<div class="candidate-group"><span class="candidate-group-title">${title}</span><div class="choice-list">${visible.map(o=>{const chosen=sel[type]===o;return `<button type="button" class="choice-row ${chosen?'selected':''}" data-resolve-type="${type}" data-resolve-value="${escapeHtml(o)}" aria-pressed="${chosen?'true':'false'}"><span class="choice-marker radio">${chosen?'●':'○'}</span><span class="choice-text">${escapeHtml(o)}</span></button>`}).join('')}</div>${more?`<button type="button" class="choice-more" data-expand-candidates="${type}">Ещё ${more} ${more===1?'вариант':'варианта'}</button>`:''}</div>`;
+    };
+    el.innerHTML=`<div class="candidate-resolution">${renderCandidateGroup('indicator','Показатель',indicatorOptions)}${renderCandidateGroup('product','Продукт',productOptions)}</div><div class="choice-footer"><button data-flow-action="confirmCandidates" class="choice-primary ${ready?'':'is-disabled'}" ${ready?'':'aria-disabled="true"'}>Продолжить</button><button data-flow-action="cancel" class="choice-cancel">Отмена</button></div>`;
   } else if (flow.step==='duplicate') {
     el.innerHTML=`<button data-flow-action="useExisting">Открыть драйвер</button><button data-flow-action="updateExisting" class="secondary">Изменить стоимость</button><button data-flow-action="differentAnalytics" class="secondary">Создать с другой аналитикой</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if(flow.step==='duplicateAnalytics'){
@@ -1748,9 +1761,12 @@ function renderContextActions() {
   } else if (flow.step==='plArticles') {
     const selected=new Set(flow.selectedPlArticles||[]);
     const opts=(flow.options||relevantPlArticles(flow.candidate));
+    const expanded=!!flow.uiExpandedPl;
+    const visible=expanded?opts:opts.slice(0,3);
+    const more=Math.max(0,opts.length-visible.length);
     const count=selected.size;
-    const countLabel=count===1?'выбрана 1 статья':`выбрано ${count} статьи`;
-    el.innerHTML=`<div class="pl-choice-block"><div class="multi-choice">${opts.map(o=>{const isSelected=selected.has(o);return `<button type="button" data-pl-toggle="${escapeHtml(o)}" class="${isSelected?'selected':''}" aria-pressed="${isSelected?'true':'false'}">${isSelected?'<span class="choice-check">✓</span> ':''}${escapeHtml(fullArticleChoiceLabel(o))}</button>`}).join('')}</div>${count?`<button data-flow-action="confirmPlArticles" class="pl-confirm">Продолжить · ${countLabel}</button>`:''}</div><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+    const countLabel=count===1?'1':String(count);
+    el.innerHTML=`<div class="pl-choice-block"><div class="choice-list">${visible.map(o=>{const isSelected=selected.has(o);return `<button type="button" data-pl-toggle="${escapeHtml(o)}" class="choice-row ${isSelected?'selected':''}" aria-pressed="${isSelected?'true':'false'}"><span class="choice-marker checkbox">${isSelected?'✓':''}</span><span class="choice-text">${escapeHtml(fullArticleChoiceLabel(o))}</span></button>`}).join('')}</div>${more?`<button type="button" class="choice-more" data-expand-pl="1">Ещё ${more} ${more===1?'статья':'статьи'}</button>`:''}${count?`<button data-flow-action="confirmPlArticles" class="pl-confirm">Продолжить · ${count}</button>`:''}</div><button data-flow-action="cancel" class="choice-cancel">Отмена</button>`;
   } else if (flow.step==='preview') {
     el.innerHTML=`<button data-flow-action="confirm">✓ Создать</button><button data-flow-action="editMenu" class="secondary">Изменить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='editMenu') {
@@ -2022,19 +2038,31 @@ document.getElementById('composer').addEventListener('submit',e=>{
   setTimeout(()=>processUserText(text),80);
 });
 document.getElementById('contextActions').addEventListener('click',e=>{
-  const resolveType=e.target.dataset.resolveType;
-  const resolveValue=e.target.dataset.resolveValue;
+  const target=e.target.closest('button');
+  if(!target) return;
+  const expandCandidates=target.dataset.expandCandidates;
+  if(expandCandidates && flow?.step==='resolveCandidates'){
+    flow.uiExpandedCandidates={...(flow.uiExpandedCandidates||{}),[expandCandidates]:true}; save(); renderContextActions(); return;
+  }
+  if(target.dataset.expandPl && flow?.step==='plArticles'){
+    flow.uiExpandedPl=true; save(); renderContextActions(); return;
+  }
+  const resolveType=target.dataset.resolveType;
+  const resolveValue=target.dataset.resolveValue;
   if(resolveType && resolveValue && flow?.step==='resolveCandidates'){
     flow.resolveSelections={...(flow.resolveSelections||{}),[resolveType]:resolveValue};
     save(); renderContextActions(); return;
   }
-  const plToggle=e.target.dataset.plToggle;
+  const plToggle=target.dataset.plToggle;
   if(plToggle && flow?.step==='plArticles'){
     const selected=new Set(flow.selectedPlArticles||[]); selected.has(plToggle)?selected.delete(plToggle):selected.add(plToggle); flow.selectedPlArticles=[...selected]; save(); renderContextActions(); return;
   }
-  const value=e.target.dataset.flowValue; const action=e.target.dataset.flowAction;
+  const value=target.dataset.flowValue; const action=target.dataset.flowAction;
   if(value){ addMessage('user',value); handleFlowAnswer(value); return; }
   if(!action) return;
+  if(action==='confirmCandidates' && (!flow?.resolveSelections?.indicator || !flow?.resolveSelections?.product)){
+    toast('Выбери показатель и продукт'); return;
+  }
   if(action==='openCreated'){
     const id=lastCreatedDriverId; lastCreatedDriverId=null; renderContextActions();
     if(id){ switchTab('registry'); setTimeout(()=>openDriver(id),120); }
@@ -2043,10 +2071,10 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   const actionLabels={
     cancel:'Отмена', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
     continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', createFromModel:'Создать драйвер', startCost:'Определить стоимость', viewModelCalc:'Посмотреть расчёт',
-    redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить', editMenu:'Изменить', editPl:'Статьи P&L', editCost:'Стоимость / расчёт', editAnalytics:'Аналитики', editDriverDefinition:'Показатель / продукт', backPreview:'Назад', confirmCandidates:'Подтвердить выбор', confirmPlArticles:'Продолжить с выбранными статьями'
+    redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить', editMenu:'Изменить', editPl:'Статьи P&L', editCost:'Стоимость / расчёт', editAnalytics:'Аналитики', editDriverDefinition:'Показатель / продукт', backPreview:'Назад'
   };
   if(action==='useSimilar'){
-    const d=drivers.find(x=>x.id===e.target.dataset.driverId); addMessage('user',d?`Использовать «${d.name}»`:'Использовать найденный драйвер');
+    const d=drivers.find(x=>x.id===target.dataset.driverId); addMessage('user',d?`Использовать «${d.name}»`:'Использовать найденный драйвер');
   } else if(actionLabels[action]) addMessage('user',actionLabels[action]);
 
   if(action==='cancel') cancelFlow();
@@ -2062,14 +2090,14 @@ document.getElementById('contextActions').addEventListener('click',e=>{
     addMessage('user',`${c.indicator} · ${c.product}`);
     save(); continueFlow();
   }
-  else if(action==='confirmPlArticles'){ const arts=flow?.selectedPlArticles||[]; if(!arts.length){ toast('Выбери хотя бы одну статью'); return; } addMessage('user',arts.map(shortArticleName).join(' + ')); applySelectedPlArticles(arts); }
+  else if(action==='confirmPlArticles'){ const arts=flow?.selectedPlArticles||[]; if(!arts.length){ toast('Выбери хотя бы одну статью'); return; } addMessage('user',arts.map(fullArticleChoiceLabel).join(' + ')); applySelectedPlArticles(arts); }
   else if(action==='confirm') finalizeDriver();
   else if(action==='differentAnalytics'){ flow.step='duplicateAnalytics'; save(); renderContextActions(); }
   else if(action==='changeProduct'){ flow.duplicateId=null; flow.duplicateChecked=false; flow.candidate.product=''; ask('product','Выбери другой продукт для нового драйвера.',PRODUCTS); }
   else if(action==='addChannel'){ flow.duplicateId=null; flow.duplicateChecked=false; ask('channel','Укажи канал, который отличает новый драйвер.'); }
   else if(action==='addSegment'){ flow.duplicateId=null; flow.duplicateChecked=false; ask('segment','Укажи сегмент, который отличает новый драйвер.'); }
   else if(action==='continueNew'){ flow.similarIds=[]; flow.step=''; save(); continueFlow(); }
-  else if(action==='useSimilar'){ const id=e.target.dataset.driverId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
+  else if(action==='useSimilar'){ const id=target.dataset.driverId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
   else if(action==='confirmFormula'){ flow.step=''; save(); continueFlow(); }
   else if(action==='createFromModel'){ finalizeDriver(); }
   else if(action==='viewModelCalc'){

@@ -1383,6 +1383,17 @@ function continueFlow() {
     }
   }
   if(!c.incrementMode) c.incrementMode=inferIncrementMode(c);
+
+  // v7.2: сущность драйвера и его стоимость — два разных этапа.
+  // До этого места фиксируем только indicator + combination. Экономика начинается ниже.
+  if(!c.driverDefinitionConfirmed){
+    c.driverDefinitionConfirmed=true; flow.step='costIntro'; save();
+    addMessage('agent', `Драйвер определён:
+${buildDriverName(c)}
+
+Теперь отдельно определим его стоимость — как изменение показателя превращается в финансовый эффект P&L.`);
+    renderContextActions(); renderProgress(); return;
+  }
   const model=availableModel(c);
   if(model?.effectType && !c.effectType){
     c.effectType=model.effectType;
@@ -1393,15 +1404,9 @@ function continueFlow() {
     if(inferred.confidence>=.85){ c.effectType=inferred.value; save(); }
     else return ask('effectType', 'Не уверен, как эффект влияет на финансовый результат. Это доходы или расходы?', ['Доходы','Расходы']);
   }
-  if(c.effectType==='Расходы' && !c.expenseIndicatorChecked){
-    const norm=normalizeExpenseIndicator(c);
-    if(!norm.ok){
-      c.expenseIndicatorChecked=true; save();
-      return ask('expenseIndicatorMeaning', `Для расходного эффекта показатель «${c.indicator}» выглядит неоднозначно. Что именно сокращаем или снижаем? Напиши показатель, например «сокращение количества операций».`);
-    }
-    c.expenseIndicatorChecked=true; save();
-    if(norm.changed) addMessage('agent', `Для расходного эффекта нормализовал показатель: «${norm.previous}» → «${norm.next}».`);
-  }
+  // v7.2: тип эффекта и направление относятся к стоимости, а не меняют сам показатель НСИ.
+  if(c.effectType==='Расходы') c.effectDirection='Сокращение / снижение';
+  else c.effectDirection='Рост / увеличение';
 
   if(!c.calcMethod && model){
     flow.step='modelChoice'; flow.modelId=model.id; save();
@@ -1445,9 +1450,9 @@ ${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)} ${formatMoney(pro
     return showPreview();
   }
 
-  if(!c.calcMethod) return ask('calcMethod','Готовой модели для этого драйвера пока нет. Как удобнее определить стоимость?',['Описать правило','Ручной ввод']);
+  if(!c.calcMethod) return ask('calcMethod','Готовой модели стоимости для этого драйвера пока нет. Как определить финансовый эффект на P&L?',['Описать логику финансового эффекта','Задать стоимость вручную']);
   c.costMode='monthly';
-  if(c.calcMethod==='rule' && !(c.costProfile||[]).length) return ask('costRule', `Опиши бизнес-логику обычным языком. Например: «10 000 ₽ в первый месяц, затем эффект растёт на 10% ежемесячно в течение 12 месяцев». Я отдельно определю начальное значение, изменение и срок, затем покажу, как понял правило.`);
+  if(c.calcMethod==='rule' && !(c.costProfile||[]).length) return ask('costRule', `Опиши, как изменение показателя превращается именно в финансовый эффект P&L. Можно писать параметры в любом порядке — я буду собирать их в текущий расчёт. Например: «на 1 млн ₽ объёма выдач ЧКД 20 тыс. ₽ ежемесячно 12 месяцев». Если формула рассчитывает только сам показатель, я это отмечу и попрошу продолжить до P&L.`);
   if(c.calcMethod==='manual' && !(c.costProfile||[]).length) return ask('costProfile', `Укажи стоимость вручную. Можно ввести одно значение или вставить помесячный профиль из Excel. В карточке каждое значение можно будет поправить отдельно.`);
   if(!(c.plAllocations||[]).length) return ask('plArticles','Выбери одну или несколько статей P&L. Сначала показываю наиболее релевантные для этого продукта. Можно также написать название обычным языком.',relevantPlArticles(c));
   if(c.pendingPlArticles?.length>1 && !c.plSplitDone) return ask('plSplitMode','Как распределить общую стоимость между статьями?',['Поровну','Указать доли']);
@@ -1460,6 +1465,24 @@ function ask(step, text, options=[], kind='') {
   flow.stepKind = kind || (options.length ? 'choice' : 'clarification');
   flow.phase = flow.stepKind==='choice' ? 'USER_CHOICE' : 'CLARIFICATION';
   save(); renderContextActions(); renderProgress();
+}
+function looksLikeIndicatorFormulaInsteadOfCost(text,c){
+  const t=normalizeText(text);
+  const hasPlEconomics=/(p&l|pnl|чпд|чкд|доход|расход|марж|риск|резерв|комисс|прибыл|эффект|стоимост)/i.test(t);
+  const hasIndicatorConstruction=/(количеств|число|шт|карт).*(средн.*чек|чек)|(средн.*чек|чек).*(количеств|число|шт|карт)/i.test(t);
+  const outputLooksLikeVolume=/(объем|объём|выдач|оборот|сбор)/i.test(t) || /объем|объём/i.test(normalizeText(c?.indicator||''));
+  return hasIndicatorConstruction && outputLooksLikeVolume && !hasPlEconomics;
+}
+function directConstantRule(text){
+  const t=String(text||'').toLowerCase().replace(/\s+/g,' ');
+  const money=t.match(/(\d[\d\s]*(?:[,.]\d+)?)\s*(?:₽|руб(?:лей|ля|ль|\.)?)/i);
+  const months=t.match(/(\d{1,2})\s*(?:месяц|месяца|месяцев|мес\.?)/i);
+  if(money && /(кажд(?:ый|ого)\s+месяц|ежемесяч|в\s+месяц)/i.test(t)){
+    const value=Number(money[1].replace(/\s/g,'').replace(',','.'));
+    const m=months?Number(months[1]):null;
+    if(value>0) return {type:'constant',start:value,amount:value,months:m};
+  }
+  return null;
 }
 function handleFlowAnswer(text) {
   const c = flow.candidate;
@@ -1498,7 +1521,7 @@ function handleFlowAnswer(text) {
   else if (flow.step === 'base') c.base = normalizeBaseAnswer(text);
   else if (flow.step === 'modelChoice') { c.calcMethod = normalizeText(text).includes('модел') || normalizeText(text).includes('использ') ? 'model' : ''; if(!c.calcMethod) c.calcMethod='rule'; c.modelId=flow.modelId||''; }
   else if (flow.step === 'calcMethod') {
-    const t=normalizeText(text); c.calcMethod=t.includes('модел')?'model':t.includes('правил')?'rule':'manual'; c.costMode='monthly';
+    const t=normalizeText(text); c.calcMethod=t.includes('модел')?'model':(t.includes('логик')||t.includes('правил'))?'rule':'manual'; c.costMode='monthly';
   }
   else if(flow.step==='modelAvgCheck'){ const x=parseCost(text); if(!x){addMessage('agent','Не смог разобрать средний чек. Укажи сумму в рублях.');return;} c.modelParams={...(c.modelParams||{}),avgCheck:x.cost}; }
   else if(flow.step==='modelConversion'){ const n=String(text).replace(',','.').match(/\d+(?:\.\d+)?/); if(!n){addMessage('agent','Укажи коэффициент в процентах.');return;} c.modelParams={...(c.modelParams||{}),conversion:n[0]}; }
@@ -1516,15 +1539,22 @@ function handleFlowAnswer(text) {
     c.modelParams={...(c.modelParams||{}),creditTermYears:String(n)};
   }
   else if (flow.step === 'costRule') {
-    flow.pendingCostLogic=text; flow.step='formulaParsing'; save(); addMessage('agent','Понял. Сначала формализую правило, потом покажу расчёт…');
+    if(looksLikeIndicatorFormulaInsteadOfCost(text,c)){
+      c.pendingIndicatorFormula=text; save();
+      addMessage('agent', `Похоже, эта формула рассчитывает сам показатель «${c.indicator}», а не его финансовую стоимость. Например, количество × средний чек может дать объём выдач, но ещё не показывает влияние на P&L.
+
+Продолжи логику до финансового эффекта: через маржу, комиссии, риск, резервы, расходы — либо укажи стоимость единицы драйвера напрямую.`);
+      return ask('costRule','Как изменение этого показателя влияет на P&L?');
+    }
+    flow.pendingCostLogic=text; flow.step='formulaParsing'; save(); addMessage('agent','Проверяю логику финансового эффекта и собираю расчёт…');
     (async()=>{
-      let f=null; try{ f=await interpretCostLogic(text); }catch{ f=localInterpretCostLogic(text); }
+      let f=directConstantRule(text); try{ if(!f) f=await interpretCostLogic(text); }catch{ if(!f) f=localInterpretCostLogic(text); }
       if(!flow) return;
       if(!f){ flow.step='costRule'; save(); addMessage('agent','Не смог однозначно понять правило. Укажи начальное значение, как оно меняется и срок расчёта.'); renderContextActions(); return; }
       c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f)||text; c.businessRationale=c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
       if(f.type!=='two_stage' && !f.months){ return ask('formulaMonths','На сколько месяцев применить это правило? Например: 12, 24 или 36.'); }
       const calculated=calculateProfile(f);
-      if(!calculated.length){ flow.step='costRule'; addMessage('agent','Не получилось рассчитать профиль. Уточни правило и срок.'); renderContextActions(); return; }
+      if(!calculated.length || !hasNonZeroEffect(calculated)){ flow.step='costRule'; save(); addMessage('agent','Расчёт не дал ненулевого финансового эффекта. Я не буду сохранять нулевую стоимость. Уточни параметры или логику влияния на P&L.'); renderContextActions(); renderProgress(); return; }
       c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
       addMessage('agent', `Я понял правило так:
 ${monthlyFormulaLabel(f)}
@@ -1647,6 +1677,7 @@ function showPreview() {
 }
 function finalizeDriver() {
   const c=flow.candidate;
+  if(!c.effectType || !c.base || !hasNonZeroEffect(c.costProfile?.length?c.costProfile:[c.cost])){ addMessage('agent','Драйвер определён, но стоимость ещё не готова: нужен тип эффекта, база и ненулевой финансовый эффект. Сохранение со стоимостью 0 ₽ запрещено.'); flow.step=''; save(); continueFlow(); return; }
   const duplicate=exactDuplicate(c); if(duplicate){ addMessage('agent','Такой драйвер с этой же аналитикой уже существует. Чтобы создать новый, измени продукт, канал или сегмент.'); flow.duplicateChecked=false; flow.step=''; save(); continueFlow(); return; }
   let indicator=indicatorRecord(c.indicator);
   if(!indicator){ indicator={name:c.indicator,unit:c.unit,status:'Подготовлен'}; indicatorRegistry.push(indicator); }
@@ -1692,8 +1723,10 @@ function renderContextActions() {
     const sims=(flow.similarIds||[]).map(id=>drivers.find(d=>d.id===id)).filter(Boolean);
     const meta=new Map((flow.similarMeta||[]).map(x=>[x.id,x.score]));
     el.innerHTML=sims.map(d=>`<div class="similar-card"><small>${escapeHtml(similarKind({score:meta.get(d.id)||1}))}</small><strong>${escapeHtml(d.name)}</strong><span>${escapeHtml(costSummary(d))} за ${escapeHtml(baseLabel(d.base))} ${escapeHtml(d.unit||'')}</span><button data-flow-action="useSimilar" data-driver-id="${d.id}">Открыть</button></div>`).join('')+`<button data-flow-action="continueNew" class="secondary">Ни один не подходит — создать новый</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='costIntro') {
+    el.innerHTML=`<button data-flow-action="startCost">Определить стоимость</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='modelChoice') {
-    el.innerHTML=`<button data-flow-value="Использовать модель">Использовать модель</button><button data-flow-value="Задать свою логику" class="secondary">Задать свою логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+    el.innerHTML=`<button data-flow-value="Использовать модель">Использовать модель</button><button data-flow-value="Использовать другую логику расчёта стоимости" class="secondary">Другая логика стоимости</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='modelResult') {
     el.innerHTML=`<button data-flow-action="createFromModel">Создать драйвер</button><button data-flow-action="viewModelCalc" class="secondary">Посмотреть расчёт</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='modelDetails') {
@@ -1719,7 +1752,7 @@ function flowProgressStage(){
     return {stage:2,total:6,label:'Уточняю данные'};
   if(['duplicate','duplicateAnalytics','similar'].includes(step) || !flow.duplicateChecked)
     return {stage:3,total:6,label:'Проверяю реестр'};
-  if(['modelChoice','calcMethod','modelAvgCheck','modelConversion','modelMargin','modelRisk','modelRepayment','modelHorizon','modelCreditTerm','costRule','formulaMonths','formulaConfirm','costProfile','cost','base','effectType','plArticle','plArticles','plSplitMode','plSplitPercent','modelResult','modelDetails'].includes(step) || !(c.costProfile||[]).length)
+  if(['costIntro','modelChoice','calcMethod','modelAvgCheck','modelConversion','modelMargin','modelRisk','modelRepayment','modelHorizon','modelCreditTerm','costRule','formulaMonths','formulaConfirm','costProfile','cost','base','effectType','plArticle','plArticles','plSplitMode','plSplitPercent','modelResult','modelDetails'].includes(step) || !(c.costProfile||[]).length)
     return {stage:4,total:6,label:'Определяю стоимость'};
   if(step==='preview') return {stage:5,total:6,label:'Проверяю результат'};
   return {stage:5,total:6,label:'Готовлю создание'};
@@ -1981,7 +2014,7 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   }
   const actionLabels={
     cancel:'Отмена', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
-    continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', createFromModel:'Создать драйвер', viewModelCalc:'Посмотреть расчёт',
+    continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', createFromModel:'Создать драйвер', startCost:'Определить стоимость', viewModelCalc:'Посмотреть расчёт',
     redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить', confirmCandidates:'Подтвердить выбор'
   };
   if(action==='useSimilar'){
@@ -1989,6 +2022,7 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   } else if(actionLabels[action]) addMessage('user',actionLabels[action]);
 
   if(action==='cancel') cancelFlow();
+  else if(action==='startCost'){ flow.step=''; flow.phase='RESOLVED'; save(); continueFlow(); }
   else if(action==='confirmCandidates'){
     const sel=flow?.resolveSelections||{};
     if(!sel.indicator || !sel.product){ toast('Выбери показатель и продукт'); return; }

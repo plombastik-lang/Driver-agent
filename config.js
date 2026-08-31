@@ -1,1 +1,1 @@
-globalThis.DRIVER_AGENT_VERSION='7.1';
+window.APP_VERSION = '7.2';

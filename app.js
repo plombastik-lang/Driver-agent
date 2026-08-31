@@ -743,6 +743,16 @@ function defaultModelBase(c, model=availableModel(c)){
 function shortArticleName(article){
   return ({'Чистый процентный доход':'ЧПД','Расходы на резервы':'Резервы','Чистый комиссионный доход':'ЧКД'})[article] || article;
 }
+function fullArticleChoiceLabel(article){
+  return ({
+    'Чистый процентный доход':'Чистый процентный доход (ЧПД)',
+    'Чистый комиссионный доход':'Чистый комиссионный доход (ЧКД)',
+    'Расходы на резервы':'Расходы на резервы',
+    'Операционные доходы':'Операционные доходы',
+    'Прочие доходы':'Прочие доходы',
+    'Прочие расходы':'Прочие расходы'
+  })[article] || article;
+}
 function compactRub(v){
   const n=moneyNumber(v), a=Math.abs(n);
   if(a>=1000000) return `${new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1}).format(n/1000000)} млн`;
@@ -1005,7 +1015,14 @@ function repairInterpretedRoles(data,userText,expectedStep=''){
   // Детерминированная проверка исходной фразы используется только как защитный слой
   // после LLM: заполняет пропуски/исправляет переставленные роли, но не заменяет INTERPRETING.
   const local=detect(raw);
-  if(local.indicator && (!out.indicator || looksLikeProductPhrase(out.indicator))) out.indicator=local.indicator;
+  // Если исходная фраза содержит просто «выдачи» без явного «количество/объём»,
+  // не разрешаем LLM молча выбрать тип показателя. Пользователь должен увидеть
+  // явный выбор и понимать, какой именно драйвер создаётся.
+  if(!expectedStep && Array.isArray(local.indicatorChoices) && local.indicatorChoices.length){
+    out.indicator=null;
+    out.indicatorChoices=[...local.indicatorChoices];
+    out.indicatorMention='выдачи';
+  } else if(local.indicator && (!out.indicator || looksLikeProductPhrase(out.indicator))) out.indicator=local.indicator;
   if(local.product && !out.product) out.product=local.product;
   if(!out.product && Array.isArray(local.productChoices) && local.productChoices.length){
     if(/\bкарт(?:а|ы|ам|ах|ой|ами)?\b/i.test(normalizeText(raw))) out.product='карты';
@@ -1298,7 +1315,7 @@ function continueFlow() {
   // Сначала разрешаем уже обнаруженную неоднозначность продукта: это обязательная
   // сущность, и нет смысла собирать остальные параметры до её проверки.
   if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices, 'choice');
-  if (!c.indicator && Array.isArray(c.indicatorChoices) && c.indicatorChoices.length) return ask('indicator','Уточни, что именно будем измерять.',c.indicatorChoices,'choice');
+  if (!c.indicator && Array.isArray(c.indicatorChoices) && c.indicatorChoices.length) return ask('indicator','Уточни показатель: речь о количестве выдач или об объёме выдач в рублях?',c.indicatorChoices,'choice');
   if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS,'choice');
   if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS,'choice');
   if (!c.indicator) return ask('indicator', 'Что именно будем измерять?', [], 'clarification');
@@ -1423,6 +1440,7 @@ function ask(step, text, options=[], kind='') {
 }
 function handleFlowAnswer(text) {
   const c = flow.candidate;
+  const answeredStep=flow.step;
   if (flow.step === 'indicator') c.indicator = text.trim();
   else if (flow.step === 'unit') { if(text.trim()==='Другое') return ask('unitCustom','Напиши единицу измерения нового показателя.'); c.unit=text.trim(); }
   else if (flow.step === 'unitCustom') c.unit=text.trim();
@@ -1530,7 +1548,7 @@ ${compactProfileLines(calculated)}
       let articles=[]; try{ articles=await interpretPlArticles(text,c); }catch{}
       if(!flow) return;
       if(!articles.length){ flow.step='plArticles'; save(); addMessage('agent','Не смог уверенно подобрать статьи. Выбери одну или несколько кнопками ниже.'); renderContextActions(); return; }
-      addMessage('agent',`Понял статьи: ${articles.map(shortArticleName).join(' + ')}.`);
+      addMessage('agent',`Понял статьи: ${articles.map(fullArticleChoiceLabel).join(' + ')}.`);
       applySelectedPlArticles(articles);
     })(); return;
   }
@@ -1560,6 +1578,10 @@ ${compactProfileLines(calculated)}
     if (!parsed) { addMessage('agent','Не смог разобрать стоимость. Укажи сумму в рублях, например «2500».'); return; }
     c.cost = parsed.cost;
   }
+  // Для ключевых сущностей сразу подтверждаем полным названием, чтобы пользователь
+  // видел, что именно зафиксировано, до перехода к расчёту.
+  if(answeredStep==='indicator' && c.indicator) addMessage('agent', `Понял: показатель — «${c.indicator}».`);
+  if(answeredStep==='product' && c.product) addMessage('agent', `Понял: продукт — «${c.product}».`);
   flow.step = ''; flow.stepKind=''; flow.options = []; save(); continueFlow();
 }
 function normalizeEffect(text) {
@@ -1648,7 +1670,7 @@ function renderContextActions() {
   } else if (flow.step==='plArticles') {
     const selected=new Set(flow.selectedPlArticles||[]);
     const opts=(flow.options||relevantPlArticles(flow.candidate));
-    el.innerHTML=`<div class="multi-choice">${opts.map(o=>`<button type="button" data-pl-toggle="${escapeHtml(o)}" class="${selected.has(o)?'selected':''}">${escapeHtml(shortArticleName(o))}</button>`).join('')}</div><button data-flow-action="confirmPlArticles" class="${selected.size?'':'secondary'}">Продолжить${selected.size?` · ${selected.size}`:''}</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+    el.innerHTML=`<div class="multi-choice">${opts.map(o=>`<button type="button" data-pl-toggle="${escapeHtml(o)}" class="${selected.has(o)?'selected':''}">${escapeHtml(fullArticleChoiceLabel(o))}</button>`).join('')}</div><button data-flow-action="confirmPlArticles" class="${selected.size?'':'secondary'}">Продолжить${selected.size?` · ${selected.size}`:''}</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='preview') {
     el.innerHTML=`<button data-flow-action="confirm">✓ Создать</button><button data-flow-action="restart" class="secondary">Изменить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else {

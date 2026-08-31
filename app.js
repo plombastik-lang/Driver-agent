@@ -816,11 +816,17 @@ function repairModelDriverCost(d){
   d.status='Готов';
   return true;
 }
-let modelCostsRepaired=0;
-for (const d of drivers) {
-  if(repairModelDriverCost(d)) modelCostsRepaired++;
-  d.name=buildDriverName(d)||d.name;
+function hydrateModelDriverCosts(list){
+  let count=0;
+  for(const d of (list||[])){
+    if(repairModelDriverCost(d)) count++;
+    // Дополнительный инвариант: «Готов» никогда не показывается с нулевой стоимостью.
+    if(d.status==='Готов' && !hasNonZeroEffect(d.costProfile?.length?d.costProfile:[d.cost])) d.status='Черновик';
+    d.name=buildDriverName(d)||d.name;
+  }
+  return count;
 }
+let modelCostsRepaired=hydrateModelDriverCosts(drivers);
 localStorage.setItem(REGISTRY_KEY, JSON.stringify(drivers));
 localStorage.setItem(MODEL_COST_REPAIR_KEY, JSON.stringify({version:'6.0',at:new Date().toISOString(),count:modelCostsRepaired}));
 function compactProfileLines(profile, limit=6){
@@ -1177,7 +1183,7 @@ async function testLlmConnection(){
     const data=await runLlmAttempt('Создай драйвер количества клиентов по ипотеке',{},'',requestId);
     const d=lastLlmDiagnostic;
     toast('LLM работает');
-    if(meta) meta.textContent=`Полный путь LLM работает${d?.ms?` · ${(d.ms/1000).toFixed(1)} с`:''}.`;
+    if(meta) meta.textContent=`LLM endpoint отвечает${d?.ms?` · ${(d.ms/1000).toFixed(1)} с`:''}. Проверка подтверждает соединение; рабочие запросы дополнительно контролируются в диагностике ниже.`;
     if(status) status.textContent='Доступно';
   }catch(err){
     console.warn('Connection check failed:',err);
@@ -1420,7 +1426,30 @@ function handleFlowAnswer(text) {
   if (flow.step === 'indicator') c.indicator = text.trim();
   else if (flow.step === 'unit') { if(text.trim()==='Другое') return ask('unitCustom','Напиши единицу измерения нового показателя.'); c.unit=text.trim(); }
   else if (flow.step === 'unitCustom') c.unit=text.trim();
-  else if (flow.step === 'product') { const pd=productDecision(text); if(pd.status==='auto') c.product=pd.value; else if(pd.status==='clarify'){ c.product=null; c.productChoices=pd.candidates.map(x=>x.entity.name); c.productGroup='ambiguous'; } else c.product=text.trim(); if(c.product){c.productGroup=''; c.productChoices=null;} }
+  else if (flow.step === 'product') {
+    const raw=text.trim();
+    const exactOption=(flow.options||[]).find(x=>normalizeText(x)===normalizeText(raw));
+    const exactCore=PRODUCTS.find(x=>normalizeText(x)===normalizeText(raw));
+    if(exactOption || exactCore){
+      c.product=exactOption||exactCore;
+      c.productGroup=''; c.productChoices=null; c.productMention=null;
+    } else {
+      const generic=genericProductChoices(raw);
+      if(generic){
+        c.product=null; c.productChoices=generic; c.productGroup='ambiguous'; c.productMention=null;
+      } else {
+        // В пользовательском flow работаем только с боевым/core-справочником.
+        // SCALE_PRODUCTS нужен исключительно для скрытого нагрузочного теста и не должен
+        // создавать ложную неоднозначность вроде «Потребительский кредит» → «Кредитные карты».
+        const pd=coreCatalogDecision(raw, PRODUCTS, PRODUCT_ALIASES, 0.86, 0.64);
+        if(pd.status==='auto') c.product=pd.value;
+        else if(pd.status==='clarify'){
+          c.product=null; c.productChoices=pd.candidates.map(x=>x.entity.name); c.productGroup='ambiguous'; c.productMention=null;
+        } else c.product=raw;
+        if(c.product){c.productGroup=''; c.productChoices=null; c.productMention=null;}
+      }
+    }
+  }
   else if (flow.step === 'effectType') { c.effectType = normalizeEffect(text); c.expenseIndicatorChecked=false; }
   else if (flow.step === 'expenseIndicatorMeaning') { c.indicator=String(text).trim(); c.newIndicator=true; c.newIndicatorPrepared=true; c.expenseIndicatorChecked=false; }
   else if (flow.step === 'channel') c.channel = text.trim();
@@ -2114,7 +2143,9 @@ document.getElementById('endSession').addEventListener('click',()=>{
 document.getElementById('resetButton').addEventListener('click',()=>{
   if(!confirm('Сбросить реестр, диалог и незавершённое создание?'))return;
   cancelPendingLlm();
-  drivers=clone(seedDrivers);messages=clone(seedMessages);flow=null;indicatorRegistry=Object.entries(INDICATOR_META).map(([name,unit])=>({name,unit,status:'Активен'}));save();renderAll();toast('Демо-данные восстановлены');
+  drivers=clone(seedDrivers); hydrateModelDriverCosts(drivers);
+  combinationRegistry=buildSeedCombinations(drivers);
+  messages=clone(seedMessages);flow=null;indicatorRegistry=Object.entries(INDICATOR_META).map(([name,unit])=>({name,unit,status:'Активен'}));save();renderAll();toast('Демо-данные восстановлены');
 });
 
 // iPhone/PWA: при открытой клавиатуре фиксируем оболочку в visual viewport,

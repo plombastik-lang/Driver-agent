@@ -105,7 +105,17 @@ function buildScaleIndicators(){
 }
 const SCALE_INDICATORS=buildScaleIndicators();
 function resolveIndicatorCandidates(query,limit=5){ return resolveCandidates(query,SCALE_INDICATORS,limit,0.44); }
+function exactIndicatorAlias(query){
+  const q=normalizeText(query);
+  for(const name of indicatorNames()){
+    if(normalizeText(name)===q) return name;
+    for(const a of (INDICATOR_ALIASES[name]||[])) if(normalizeText(a)===q) return name;
+  }
+  return '';
+}
 function indicatorDecision(query){
+  const exact=exactIndicatorAlias(query);
+  if(exact) return {status:'auto',value:exact,confidence:1,candidates:[]};
   const c=resolveIndicatorCandidates(query,5);
   if(!c.length) return {status:'none',candidates:[]};
   const top=c[0], second=c[1];
@@ -1052,7 +1062,8 @@ function normalizeInterpretedData(data){
       out.indicator=null; out.indicatorChoices=genericChoices; out.indicatorMention=data.indicator; out.newIndicator=false;
     } else {
       const canonicalNew=canonicalNewIndicatorName(data.indicator);
-      const d=coreCatalogDecision(canonicalNew, indicatorNames(), INDICATOR_ALIASES, 0.90, 0.68);
+      const exact=exactIndicatorAlias(canonicalNew);
+      const d=exact ? {status:'auto',value:exact} : coreCatalogDecision(canonicalNew, indicatorNames(), INDICATOR_ALIASES, 0.90, 0.68);
       if(d.status==='auto') { out.indicator=d.value; out.newIndicator=false; }
       else if(d.status==='clarify'){ out.indicator=null; out.indicatorChoices=d.candidates.map(x=>x.entity.name); out.indicatorMention=data.indicator; out.newIndicator=false; }
       else { out.indicator=canonicalNew; out.newIndicator=true; }
@@ -1701,6 +1712,7 @@ function renderMessages() {
   requestAnimationFrame(()=>{ el.scrollTop=el.scrollHeight; });
 }
 function renderContextActions() {
+  updatePromptPlaceholder();
   const el=document.getElementById('contextActions');
   const quick=document.getElementById('quickStart');
   if(quick) quick.hidden=!!flow;
@@ -1738,7 +1750,9 @@ function renderContextActions() {
     const opts=(flow.options||relevantPlArticles(flow.candidate));
     el.innerHTML=`<div class="multi-choice">${opts.map(o=>`<button type="button" data-pl-toggle="${escapeHtml(o)}" class="${selected.has(o)?'selected':''}">${escapeHtml(fullArticleChoiceLabel(o))}</button>`).join('')}</div><button data-flow-action="confirmPlArticles" class="${selected.size?'':'secondary'}">Продолжить${selected.size?` · ${selected.size}`:''}</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='preview') {
-    el.innerHTML=`<button data-flow-action="confirm">✓ Создать</button><button data-flow-action="restart" class="secondary">Изменить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+    el.innerHTML=`<button data-flow-action="confirm">✓ Создать</button><button data-flow-action="editMenu" class="secondary">Изменить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='editMenu') {
+    el.innerHTML=`<button data-flow-action="editPl">Статьи P&L</button><button data-flow-action="editCost" class="secondary">Стоимость / расчёт</button><button data-flow-action="editAnalytics" class="secondary">Аналитики</button><button data-flow-action="editDriverDefinition" class="secondary">Показатель / продукт</button><button data-flow-action="backPreview" class="quiet">Назад</button>`;
   } else {
     el.innerHTML=(flow.options||[]).map(o=>`<button data-flow-value="${escapeHtml(o)}">${escapeHtml(o)}</button>`).join('') + `<button data-flow-action="cancel" class="quiet">Отмена</button>`;
   }
@@ -1988,6 +2002,18 @@ function closeDriver(){
   window.scrollTo({top:0,behavior:'smooth'});
 }
 for(const tab of document.querySelectorAll('.tab')) tab.addEventListener('click',()=>{ if(tab.dataset.tab==='models'){ focusedModelId=null; expandedModelId=null; } switchTab(tab.dataset.tab); });
+function updatePromptPlaceholder(){
+  const input=document.getElementById('prompt'); if(!input) return;
+  if(!flow){ input.placeholder='Например: создай драйвер объёма выдач по ипотеке'; return; }
+  const map={indicator:'Напиши показатель…',product:'Напиши продукт…',channel:'Напиши канал…',segment:'Напиши сегмент…',effectType:'Доходы или расходы…',base:'Укажи базу расчёта…',costRule:'Опиши логику финансового эффекта…',costProfile:'Укажи стоимость или вставь профиль…',plArticles:'Напиши название статьи P&L…',plSplitPercent:'Укажи доли статей…',editMenu:'Выбери, что изменить…'};
+  input.placeholder=map[flow.step]||'Введите сообщение…';
+}
+function submitPrompt(){
+  const form=document.getElementById('composer'); if(form?.requestSubmit) form.requestSubmit();
+}
+document.getElementById('prompt').addEventListener('keydown',e=>{
+  if(e.key==='Enter' && !e.shiftKey && !e.isComposing){ e.preventDefault(); submitPrompt(); }
+});
 document.getElementById('composer').addEventListener('submit',e=>{
   e.preventDefault(); const input=document.getElementById('prompt'); const text=input.value.trim(); if(!text)return;
   addMessage('user',text); input.value='';
@@ -2015,7 +2041,7 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   const actionLabels={
     cancel:'Отмена', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
     continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', createFromModel:'Создать драйвер', startCost:'Определить стоимость', viewModelCalc:'Посмотреть расчёт',
-    redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить', confirmCandidates:'Подтвердить выбор'
+    redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить', editMenu:'Изменить', editPl:'Статьи P&L', editCost:'Стоимость / расчёт', editAnalytics:'Аналитики', editDriverDefinition:'Показатель / продукт', backPreview:'Назад', confirmCandidates:'Подтвердить выбор'
   };
   if(action==='useSimilar'){
     const d=drivers.find(x=>x.id===e.target.dataset.driverId); addMessage('user',d?`Использовать «${d.name}»`:'Использовать найденный драйвер');
@@ -2060,6 +2086,25 @@ ${allocations.map(a=>`${a.article}: ${formatMoney(profileTotal(a.profile||[]))} 
   else if(action==='redoFormula'){ flow.candidate.costProfile=[]; flow.candidate.costFormula=null; flow.candidate.costLogicText=''; flow.step=''; save(); continueFlow(); }
   else if(action==='updateExisting'){ const id=flow.duplicateId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
   else if(action==='useExisting'){ const id=flow.duplicateId; flow=null; save(); switchTab('registry'); renderContextActions(); renderProgress(); setTimeout(()=>openDriver(id),120); }
+  else if(action==='editMenu'){ flow.step='editMenu'; save(); addMessage('agent','Что именно изменить? Остальные уже выбранные данные я сохраню.'); renderContextActions(); renderProgress(); }
+  else if(action==='backPreview'){ flow.step='preview'; save(); renderContextActions(); renderProgress(); }
+  else if(action==='editPl'){
+    flow.candidate.plAllocations=[]; flow.candidate.pendingPlArticles=[]; flow.candidate.plSplitDone=false; flow.selectedPlArticles=[];
+    save(); addMessage('agent','Меняем только статьи P&L. Драйвер, база и рассчитанная стоимость останутся без изменений.');
+    ask('plArticles','Выбери одну или несколько статей P&L.',relevantPlArticles(flow.candidate));
+  }
+  else if(action==='editCost'){
+    const c=flow.candidate; c.costProfile=[]; c.cost=''; c.costFormula=null; c.costLogicText=''; c.plAllocations=[]; c.pendingPlArticles=[]; c.plSplitDone=false; c.calcMethod='';
+    flow.step=''; save(); addMessage('agent','Меняем расчёт стоимости. Показатель и комбинация аналитик сохранятся.'); continueFlow();
+  }
+  else if(action==='editAnalytics'){
+    const c=flow.candidate; c.channel=''; c.segment=''; c.combinationId=''; c.combinationName=''; flow.duplicateChecked=false; flow.step='';
+    save(); addMessage('agent','Показатель и продукт сохраняю. Укажи канал или сегмент, если они нужны; можно написать «без дополнительных аналитик».'); ask('channel','Укажи канал или напиши «без дополнительных аналитик».');
+  }
+  else if(action==='editDriverDefinition'){
+    const c=flow.candidate; c.indicator=''; c.product=''; c.combinationId=''; c.combinationName=''; c.driverDefinitionConfirmed=false; flow.duplicateChecked=false; c.costProfile=[]; c.cost=''; c.plAllocations=[]; c.calcMethod='';
+    save(); addMessage('agent','Меняем показатель или продукт. После изменения я повторно проверю дубли, модель и стоимость.'); ask('indicator','Что именно будем измерять?');
+  }
   else if(action==='restart'){ const original=flow.original; flow=null; save(); addMessage('agent','Хорошо. Напиши уточнённый запрос заново — текущую карточку я не создал.'); document.getElementById('prompt').value=original; document.getElementById('prompt').focus(); renderContextActions(); renderProgress(); }
 });
 document.getElementById('modelList')?.addEventListener('click',e=>{ const row=e.target.closest('.model-row'); if(!row)return; const item=row.closest('[data-model-id]'); expandedModelId=expandedModelId===item.dataset.modelId && !focusedModelId ? null : item.dataset.modelId; renderModels(); });

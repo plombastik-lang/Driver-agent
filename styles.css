@@ -254,3 +254,13 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
   .pl-combined.pl-mobile-table input{width:100%;min-width:0;padding:6px 3px!important;font-size:.70rem!important;text-align:right}
   .pl-combined.pl-mobile-table th{white-space:normal;line-height:1.05}
 }
+
+
+/* v7.1: simultaneous candidate resolution */
+.candidate-resolution{display:grid;gap:16px;width:100%;margin-bottom:4px}
+.candidate-group{display:grid;gap:8px;width:100%}
+.candidate-group-title{font-size:13px;font-weight:800;letter-spacing:.02em;color:var(--muted,#9aa6c4)}
+.candidate-group .multi-choice{display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;scrollbar-width:none}
+.candidate-group .multi-choice::-webkit-scrollbar{display:none}
+.candidate-group .multi-choice button{flex:0 0 auto;white-space:normal;text-align:left;max-width:min(310px,78vw)}
+@media (min-width:720px){.candidate-resolution{grid-template-columns:1fr 1fr}.candidate-group .multi-choice{flex-wrap:wrap;overflow:visible}.candidate-group .multi-choice button{max-width:100%}}

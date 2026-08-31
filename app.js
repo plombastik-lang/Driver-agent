@@ -1,3 +1,4 @@
+const APP_VERSION = globalThis.DRIVER_AGENT_VERSION || '7.1';
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
 const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.9';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
@@ -1297,6 +1298,23 @@ function defaultModelParams(c, model){
   if(model?.id==='insurance_income_v1') return {conversion:'50',horizon:1,sources:{conversion:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'};
   return {};
 }
+function askCandidateResolution(){
+  if(!flow) return;
+  const c=flow.candidate||{};
+  const indicatorOptions=Array.isArray(c.indicatorChoices)?c.indicatorChoices:[];
+  const productOptions=Array.isArray(c.productChoices)?c.productChoices:[];
+  flow.resolveSelections={
+    indicator:c.indicator || flow.resolveSelections?.indicator || '',
+    product:c.product || flow.resolveSelections?.product || ''
+  };
+  if(flow.step!=='resolveCandidates') addMessage('agent','Нашёл несколько подходящих вариантов. Выбери показатель и продукт — после этого продолжу создание драйвера.');
+  flow.step='resolveCandidates';
+  flow.stepKind='choice';
+  flow.phase='USER_CHOICE';
+  flow.options=[];
+  save(); renderContextActions(); renderProgress();
+}
+
 function continueFlow() {
   if (!flow) return;
   const c = flow.candidate;
@@ -1312,12 +1330,17 @@ function continueFlow() {
       flow=null; save(); renderContextActions(); renderProgress(); return;
     }
   }
-  // Сначала разрешаем уже обнаруженную неоднозначность продукта: это обязательная
-  // сущность, и нет смысла собирать остальные параметры до её проверки.
-  if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) return ask('product', 'В запросе вижу несколько возможных продуктов. Уточни, к какому продукту относится драйвер.', c.productChoices, 'choice');
-  if (!c.indicator && Array.isArray(c.indicatorChoices) && c.indicatorChoices.length) return ask('indicator','Уточни показатель: речь о количестве выдач или об объёме выдач в рублях?',c.indicatorChoices,'choice');
-  if (!c.product && c.productGroup==='credit') return ask('product','Уточни вид кредита для драйвера.',CREDIT_PRODUCTS,'choice');
-  if (!c.product && c.productGroup==='insurance') return ask('product','Уточни страховой продукт для драйвера.',INSURANCE_PRODUCTS,'choice');
+  // Если из исходного запроса уже видны неоднозначности по нескольким сущностям,
+  // не растягиваем их на последовательные вопросы. Сразу показываем top-k кандидатов
+  // по показателю и продукту в одной карточке выбора.
+  if(!c.product && !Array.isArray(c.productChoices)){
+    if(c.productGroup==='credit') c.productChoices=[...CREDIT_PRODUCTS];
+    else if(c.productGroup==='insurance') c.productChoices=[...INSURANCE_PRODUCTS];
+  }
+  if((!c.indicator && Array.isArray(c.indicatorChoices) && c.indicatorChoices.length) &&
+     (!c.product && Array.isArray(c.productChoices) && c.productChoices.length)) return askCandidateResolution();
+  if (!c.product && Array.isArray(c.productChoices) && c.productChoices.length) return ask('product', 'Нашёл несколько похожих продуктов. Выбери подходящий.', c.productChoices, 'choice');
+  if (!c.indicator && Array.isArray(c.indicatorChoices) && c.indicatorChoices.length) return ask('indicator','Нашёл несколько похожих показателей. Выбери, что именно будем измерять.',c.indicatorChoices,'choice');
   if (!c.indicator) return ask('indicator', 'Что именно будем измерять?', [], 'clarification');
   if(isPlArticle(c.indicator)){
     addMessage('agent', `«${c.indicator}» — статья P&L, а статья P&L не может быть драйвером. Укажи бизнес-показатель, изменение которого формирует эту статью — например, объём или количество выдач.`);
@@ -1651,7 +1674,17 @@ function renderContextActions() {
   const quick=document.getElementById('quickStart');
   if(quick) quick.hidden=!!flow;
   if (!flow) { el.innerHTML=lastCreatedDriverId?`<button data-flow-action="openCreated">Открыть карточку драйвера</button>`:''; return; }
-  if (flow.step==='duplicate') {
+  if(flow.step==='resolveCandidates'){
+    const c=flow.candidate||{};
+    const sel=flow.resolveSelections||{};
+    const indicatorOptions=Array.isArray(c.indicatorChoices)?c.indicatorChoices:[];
+    const productOptions=Array.isArray(c.productChoices)?c.productChoices:[];
+    const ready=!!sel.indicator && !!sel.product;
+    el.innerHTML=`<div class="candidate-resolution">
+      <div class="candidate-group"><span class="candidate-group-title">Похожие показатели</span><div class="multi-choice">${indicatorOptions.map(o=>`<button type="button" data-resolve-type="indicator" data-resolve-value="${escapeHtml(o)}" class="${sel.indicator===o?'selected':''}">${escapeHtml(o)}</button>`).join('')}</div></div>
+      <div class="candidate-group"><span class="candidate-group-title">Похожие продукты</span><div class="multi-choice">${productOptions.map(o=>`<button type="button" data-resolve-type="product" data-resolve-value="${escapeHtml(o)}" class="${sel.product===o?'selected':''}">${escapeHtml(o)}</button>`).join('')}</div></div>
+    </div><button data-flow-action="confirmCandidates" class="${ready?'':'secondary'}">Продолжить</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='duplicate') {
     el.innerHTML=`<button data-flow-action="useExisting">Открыть драйвер</button><button data-flow-action="updateExisting" class="secondary">Изменить стоимость</button><button data-flow-action="differentAnalytics" class="secondary">Создать с другой аналитикой</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if(flow.step==='duplicateAnalytics'){
     el.innerHTML=`<button data-flow-action="changeProduct">Другой продукт</button><button data-flow-action="addChannel" class="secondary">Добавить / изменить канал</button><button data-flow-action="addSegment" class="secondary">Добавить / изменить сегмент</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
@@ -1682,7 +1715,7 @@ function flowProgressStage(){
   const c=flow.candidate||{};
   const step=flow.step||'';
   if(flow.phase==='INTERPRETING') return {stage:1,total:6,label:'Понимаю запрос'};
-  if(['indicator','product','unit','unitCustom','channel','segment'].includes(step) || !c.indicator || !c.product || !c.combinationId)
+  if(['resolveCandidates','indicator','product','unit','unitCustom','channel','segment'].includes(step) || !c.indicator || !c.product || !c.combinationId)
     return {stage:2,total:6,label:'Уточняю данные'};
   if(['duplicate','duplicateAnalytics','similar'].includes(step) || !flow.duplicateChecked)
     return {stage:3,total:6,label:'Проверяю реестр'};
@@ -1928,6 +1961,12 @@ document.getElementById('composer').addEventListener('submit',e=>{
   setTimeout(()=>processUserText(text),80);
 });
 document.getElementById('contextActions').addEventListener('click',e=>{
+  const resolveType=e.target.dataset.resolveType;
+  const resolveValue=e.target.dataset.resolveValue;
+  if(resolveType && resolveValue && flow?.step==='resolveCandidates'){
+    flow.resolveSelections={...(flow.resolveSelections||{}),[resolveType]:resolveValue};
+    save(); renderContextActions(); return;
+  }
   const plToggle=e.target.dataset.plToggle;
   if(plToggle && flow?.step==='plArticles'){
     const selected=new Set(flow.selectedPlArticles||[]); selected.has(plToggle)?selected.delete(plToggle):selected.add(plToggle); flow.selectedPlArticles=[...selected]; save(); renderContextActions(); return;
@@ -1943,13 +1982,24 @@ document.getElementById('contextActions').addEventListener('click',e=>{
   const actionLabels={
     cancel:'Отмена', confirm:'Создать драйвер', differentAnalytics:'Создать с другой аналитикой', changeProduct:'Другой продукт', addChannel:'Добавить канал', addSegment:'Добавить сегмент', updateExisting:'Изменить стоимость',
     continueNew:'Создать новый драйвер', confirmFormula:'Подтвердить расчёт', createFromModel:'Создать драйвер', viewModelCalc:'Посмотреть расчёт',
-    redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить'
+    redoModel:'Изменить параметры', redoFormula:'Изменить логику', useExisting:'Открыть существующий драйвер', restart:'Изменить', confirmCandidates:'Подтвердить выбор'
   };
   if(action==='useSimilar'){
     const d=drivers.find(x=>x.id===e.target.dataset.driverId); addMessage('user',d?`Использовать «${d.name}»`:'Использовать найденный драйвер');
   } else if(actionLabels[action]) addMessage('user',actionLabels[action]);
 
   if(action==='cancel') cancelFlow();
+  else if(action==='confirmCandidates'){
+    const sel=flow?.resolveSelections||{};
+    if(!sel.indicator || !sel.product){ toast('Выбери показатель и продукт'); return; }
+    const c=flow.candidate;
+    c.indicator=sel.indicator; c.indicatorChoices=null; c.indicatorMention=null;
+    c.product=sel.product; c.productChoices=null; c.productGroup=''; c.productMention=null;
+    c.unit=unitFor(c.indicator);
+    flow.resolveSelections=null; flow.step=''; flow.stepKind=''; flow.options=[];
+    addMessage('user',`${c.indicator} · ${c.product}`);
+    save(); continueFlow();
+  }
   else if(action==='confirmPlArticles'){ const arts=flow?.selectedPlArticles||[]; if(!arts.length){ toast('Выбери хотя бы одну статью'); return; } addMessage('user',arts.map(shortArticleName).join(' + ')); applySelectedPlArticles(arts); }
   else if(action==='confirm') finalizeDriver();
   else if(action==='differentAnalytics'){ flow.step='duplicateAnalytics'; save(); renderContextActions(); }
@@ -2223,3 +2273,6 @@ function closeSettingsModal(){ const m=document.getElementById('settingsModal');
 document.getElementById('settingsGear')?.addEventListener('click',openSettingsModal);
 document.getElementById('closeSettings')?.addEventListener('click',closeSettingsModal);
 document.querySelector('[data-close-settings]')?.addEventListener('click',closeSettingsModal);
+
+// Единый источник версии для интерфейса и диагностики.
+document.querySelectorAll('.version-pill').forEach(el=>el.textContent=`v${APP_VERSION}`);

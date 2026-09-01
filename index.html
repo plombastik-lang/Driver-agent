@@ -10,7 +10,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icon-180.png" />
   <link rel="icon" href="icon-192.png" />
-  <link rel="stylesheet" href="styles.css?v=7.5" />
+  <link rel="stylesheet" href="styles.css?v=8.4" />
   <title>Driver Agent</title>
 </head>
 <body class="auth-pending">
@@ -40,7 +40,7 @@
         <h1>Driver Agent</h1>
         <p>Агент управления драйверами</p>
       </div>
-      <div class="top-actions"><span class="version-pill">v8.0</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
+      <div class="top-actions"><span class="version-pill">v8.4</span><button id="settingsGear" class="settings-gear" type="button" aria-label="Настройки">⚙</button></div>
     </header>
 
     <section class="summary-card">
@@ -93,6 +93,7 @@
             <input type="hidden" id="editName" />
             <label>Показатель<input id="editIndicator" required /></label>
             <label>Продукт<input id="editProduct" required /></label>
+            <label>Субпродукт<input id="editSubproduct" placeholder="Необязательно · локальный справочник" /></label>
             <div class="form-grid analytics-grid">
               <label id="editChannelWrap">Канал<input id="editChannel" placeholder="Например: мобильный банк" /></label>
               <label id="editSegmentWrap">Сегмент<input id="editSegment" placeholder="Например: массовый" /></label>
@@ -187,7 +188,7 @@
     </section>
 
     <section id="dictionaries" class="panel">
-      <div class="section-head"><div><h2>Справочники</h2><p>Демо-НСИ, с которой сейчас работает агент.</p></div></div><div class="dictionary-search-wrap"><input id="dictionarySearch" class="dictionary-search" type="search" placeholder="Найти показатель, продукт, канал или сегмент" autocomplete="off"></div>
+      <div class="section-head"><div><h2>Справочники</h2><p>Демо-НСИ, с которой сейчас работает агент.</p></div></div><div class="dictionary-search-wrap"><input id="dictionarySearch" class="dictionary-search" type="search" placeholder="Найти показатель, продукт, субпродукт, канал или сегмент" autocomplete="off"></div>
       <div class="table-card">
         <div class="table-title"><h3>Показатели</h3><span id="indicatorCount"></span></div>
         <div class="table-wrap indicator-table-wrap"><table class="indicator-table"><thead><tr><th>Наименование</th><th>Ед.</th><th>Статус</th></tr></thead><tbody id="indicatorDict"></tbody></table></div>
@@ -195,6 +196,10 @@
       <div class="table-card">
         <div class="table-title"><h3>Продукты</h3><span id="productCount"></span></div>
         <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Статус</th></tr></thead><tbody id="productDict"></tbody></table></div>
+      </div>
+      <div class="table-card">
+        <div class="table-title"><div><h3>Субпродукты</h3><small>Локальный справочник · каждое значение связано с продуктом</small></div><span id="subproductCount"></span></div>
+        <div class="table-wrap"><table><thead><tr><th>Наименование</th><th>Продукт</th><th>Статус</th></tr></thead><tbody id="subproductDict"></tbody></table></div>
       </div>
       <div class="table-card">
         <div class="table-title"><h3>Каналы</h3><span id="channelCount"></span></div>

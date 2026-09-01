@@ -332,3 +332,36 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
 .demo-finger{position:fixed;z-index:5000;width:24px;height:24px;border:2px solid rgba(30,30,30,.58);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;animation:demoFinger .55s ease forwards;background:rgba(255,255,255,.38)}
 @keyframes demoFinger{0%{opacity:0;transform:translate(-50%,-50%) scale(1.5)}35%{opacity:1;transform:translate(-50%,-50%) scale(.82)}75%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.45)}}
 .dictionary-search-wrap{margin:0 0 14px}.dictionary-search{width:100%;box-sizing:border-box;border:1px solid var(--line);background:var(--surface);color:var(--text);border-radius:16px;padding:14px 16px;font:inherit;outline:none}.dictionary-search:focus{border-color:var(--accent)}
+
+/* v8.0 — compact desktop shell inspired by the bank's Final assistant. */
+@media (min-width:900px){
+  body{background:#eef0f4;color:#141824}
+  .app-shell{width:min(100% - 48px,760px);min-height:auto;margin:40px auto;padding:0;background:transparent}
+  .topbar{align-items:center;padding:0 4px 12px}
+  .topbar .eyebrow,.topbar p,.summary-card{display:none}
+  .topbar h1{font-size:20px;color:#171b26;margin:0}
+  .version-pill{background:#f3effb;border-color:#d8cfec;color:#6c4ba4}
+  .settings-gear{color:#4a4553}
+  .tabs{max-width:none;width:100%;margin:0 0 10px;padding:3px;border-radius:12px;background:#fff;border-color:#e0e3ea;box-shadow:0 8px 28px rgba(34,39,52,.08);grid-template-columns:repeat(4,1fr)}
+  .tab{font-size:12px;padding:9px 6px;color:#717786}.tab.active{background:#eee8f8;color:#68469a}
+  #chat.active{display:block;min-height:auto;background:#fff;border:1px solid #e1e4eb;border-radius:16px;padding:14px 16px 16px;box-shadow:0 18px 50px rgba(34,39,52,.12)}
+  #chat::before{content:'✦  AI-помощник';display:block;color:#1b1d24;font-weight:800;font-size:17px;margin:2px 0 10px}
+  #chat .chat-session-bar{display:none}
+  #chat .progress-card{max-width:none;background:#f7f7fa;border-color:#e5e5eb;color:#2b2e38}
+  #chat .messages{min-height:140px;max-height:440px;overflow:auto;padding:0 2px 10px;gap:8px}
+  #chat .message{max-width:86%;font-size:14px;padding:10px 12px;box-shadow:none}
+  #chat .message.agent{background:#f6f6f9;border-color:#e4e5ea;color:#252831}
+  #chat .message.user{background:#eee8f8;color:#4d356d;border:1px solid #ddd2ee}
+  #chat .message.preview-message{background:#f5f2fa;border-color:#d7caea}
+  #chat .context-actions,#chat .quick-actions{padding-bottom:8px;flex-wrap:wrap;overflow:visible}
+  #chat .context-actions button,#chat .quick-actions button{font-size:11px;padding:8px 10px;border-radius:10px;background:#f5f3fa;color:#5a3d82;border-color:#ddd2ef}
+  #chat .composer{position:static;background:transparent;backdrop-filter:none;padding:4px 0 0;display:grid;grid-template-columns:1fr 44px;gap:7px;align-items:end}
+  #chat .composer textarea{min-height:44px;height:44px;border-radius:11px;padding:11px 12px;background:#fff;color:#20232c;border-color:#cbd0da}
+  #chat .composer button{width:44px;height:44px;margin:0;padding:0;border-radius:11px;font-size:0;background:#7651a8}
+  #chat .composer button::after{content:'➜';font-size:20px}
+  #registry,#models,#dictionaries{background:#fff;border:1px solid #e1e4eb;border-radius:16px;padding:16px;box-shadow:0 18px 50px rgba(34,39,52,.10);color:#20232d}
+  .section-head h2,.detail-title h2{color:#20232d}
+  .driver-card,.table-card,.form-section,.info-card{background:#f8f8fa;border-color:#e2e4e9;color:#252832}
+  .driver-card h3,.meta strong,td{color:#252832}.meta,.cost-line{background:#fff}.driver-form input,.driver-form select{background:#fff;color:#222;border-color:#d8dce5}
+  .demo-panel{top:24px;right:24px}
+}

@@ -2253,6 +2253,7 @@ function openDriver(id){
   document.getElementById('editIndicator').value=d.indicator;
   document.getElementById('editProduct').value=d.product;
   const editSubproduct=document.getElementById('editSubproduct'); if(editSubproduct) editSubproduct.value=d.subproduct||'';
+  const editSubproductWrap=document.getElementById('editSubproductWrap'); if(editSubproductWrap) editSubproductWrap.hidden=!d.subproduct;
   document.getElementById('editEffectType').value=d.effectType;
   const commonUnits=['шт.','₽','%'];
   const unitSelect=document.getElementById('editUnit');
@@ -2705,19 +2706,32 @@ async function demoAgent(text,wait=850){
 function demoActions(html){const el=document.getElementById('contextActions');el.innerHTML=`<div class="demo-choice-box">${html}</div>`;el.scrollIntoView({behavior:'smooth',block:'end'});}
 async function demoChoose(selector){const el=document.querySelector(selector);await demoTap(el,420);if(el){el.classList.add('selected');const mark=el.querySelector('.choice-marker');if(mark)mark.textContent=mark.classList.contains('checkbox')?'✓':'●';}}
 async function demoContinue(){const b=document.querySelector('#contextActions .choice-primary, #contextActions .demo-primary, #contextActions .pl-confirm');await demoTap(b,520);document.getElementById('contextActions').innerHTML='';}
+async function demoInspectDriverCard(){
+  if(!demoState.running)return;
+  const detail=document.getElementById('driverDetailView'); if(!detail||detail.hidden)return;
+  window.scrollTo({top:0,behavior:'smooth'}); await demoDelay(1200);
+  const sections=[...detail.querySelectorAll('.form-section')].filter(el=>!el.hidden);
+  for(const section of sections){
+    if(!demoState.running)return;
+    section.scrollIntoView({behavior:'smooth',block:'center'});
+    await demoDelay(1750);
+  }
+  const approve=document.getElementById('approveDriver');
+  if(approve&&!approve.hidden){approve.scrollIntoView({behavior:'smooth',block:'center'});await demoDelay(1800);}
+}
 function demoSnapshot(){return {drivers:clone(drivers),messages:clone(messages),flow:clone(flow),indicators:clone(indicatorRegistry),subproducts:clone(subproductRegistry),combinations:clone(combinationRegistry)};}
 function restoreDemoSnapshot(){if(!demoState.snapshot)return;drivers=clone(demoState.snapshot.drivers);messages=clone(demoState.snapshot.messages);flow=clone(demoState.snapshot.flow);indicatorRegistry=clone(demoState.snapshot.indicators);subproductRegistry=clone(demoState.snapshot.subproducts||subproductRegistry);combinationRegistry=clone(demoState.snapshot.combinations);demoState.snapshot=null;demoState.tempId=null;save();renderAll();}
 function showDemoPanel(){closeSettingsModal();document.getElementById('demoPanel').hidden=false;document.getElementById('demoScenarioPicker').hidden=false;document.getElementById('demoControls').hidden=true;document.getElementById('demoTitle').textContent='Выберите сценарий';}
 function endDemo(restore=true){demoState.running=false;demoState.paused=false;demoState.token++;document.body.classList.remove('demo-recording');document.getElementById('prompt')?.blur();document.getElementById('contextActions').innerHTML='';document.getElementById('demoPause').textContent='Пауза';if(restore)restoreDemoSnapshot();document.getElementById('demoPanel').hidden=false;document.getElementById('demoScenarioPicker').hidden=false;document.getElementById('demoControls').hidden=true;document.getElementById('demoTitle').textContent='Выберите сценарий';}
 function closeDemoPanel(){endDemo(true);document.getElementById('demoPanel').hidden=true;switchTab('chat');}
-function demoFullDriver(){return {id:'demo-full-approval',name:'Количество клиентов Кредитные карты Мобильное приложение',indicator:'Количество клиентов',product:'Кредитные карты',unit:'шт.',effectType:'Доходы',direction:'Рост / увеличение',base:'1',channel:'Мобильное приложение',segment:'',combinationId:'demo-combo-mobile-credit',combinationName:'Кредитные карты · Мобильное приложение',incrementMode:'annual_spread',calcMethod:'rule',modelId:'',modelParams:null,costMode:'monthly',costProfile:['50'],plAllocations:[{article:'Чистый комиссионный доход',profile:['50']}],costLogicText:'Каждый дополнительный клиент с кредитной картой приносит 50 ₽ комиссионного дохода в месяц.',businessRationale:'Рост клиентской базы кредитных карт увеличивает комиссионный доход Банка.',status:'На согласовании'};}
+function demoFullDriver(){return {id:'demo-full-approval',name:'Количество клиентов Кредитные карты Мобильное приложение',indicator:'Количество клиентов',product:'Кредитные карты',unit:'шт.',effectType:'Доходы',direction:'Рост / увеличение',base:'1',channel:'Мобильное приложение',segment:'',combinationId:'demo-combo-mobile-credit',combinationName:'Кредитные карты · Мобильное приложение',incrementMode:'annual_spread',calcMethod:'rule',modelId:'',modelParams:null,costMode:'monthly',costProfile:['50'],plAllocations:[{article:'Комиссионные доходы по банковским картам',profile:['50']}],costLogicText:'Каждый дополнительный клиент с кредитной картой приносит 50 ₽ комиссионного дохода в месяц.',businessRationale:'Рост клиентской базы кредитных карт увеличивает комиссионный доход Банка.',status:'На согласовании'};}
 function demoDriverIncome(){const d={id:'demo-live-income',name:'Объём выдач Ипотечное кредитование',indicator:'Объём выдач',product:'Ипотечное кредитование',unit:'₽',effectType:'Доходы',base:'1000000',channel:'',segment:'',incrementMode:'annual_spread',calcMethod:'model',modelId:'credit_income_v2',modelParams:{margin:'12',risk:'2.4',repayment:'2',creditTermYears:'15',horizon:36,sources:{margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},costMode:'monthly',costProfile:[],plAllocations:[],costLogicText:'',businessRationale:'',status:'Готов'};const r=calculateModel(d);d.costProfile=(r.profile||[]).map(String);d.plAllocations=r.allocations||[];d.costLogicText=modelLogicText(d);d.businessRationale=modelBusinessRationale(d);return d;}
 function demoDriverExpense(){return {id:'demo-live-expense',name:'Количество операций Платежи',indicator:'Количество операций',product:'Платежи',unit:'шт.',effectType:'Расходы',direction:'Сокращение',base:'1000',channel:'',segment:'',incrementMode:'annual_spread',calcMethod:'rule',modelId:'',modelParams:null,costMode:'monthly',costProfile:['-100000'],plAllocations:[{article:'Прочие расходы',profile:['-100000']}],costLogicText:'Сокращение 1 000 операций снижает расходы на 100 000 ₽.',businessRationale:'Снижение количества операций сокращает операционные расходы.',status:'Готов'};}
 async function runFullDemo(){
   await demoType('Создай драйвер по клиентам для карт в мобильном приложении');
   await demoAgent('Нашёл несколько подходящих вариантов. Выберите показатель и продукт — можно выбрать оба сразу.');
   demoActions(`<div class="candidate-resolution"><div class="candidate-group"><span class="candidate-group-title">Показатель</span><div class="choice-list"><button class="choice-row" data-demo-choice="ind-clients"><span class="choice-marker radio">○</span><span class="choice-text">Количество клиентов</span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text">Количество продаж</span></button></div></div><div class="candidate-group"><span class="candidate-group-title">Продукт</span><div class="choice-list"><button class="choice-row" data-demo-choice="prod-credit"><span class="choice-marker radio">○</span><span class="choice-text">Кредитные карты</span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text">Дебетовые карты</span></button></div></div></div><div class="choice-footer"><button class="choice-primary">Продолжить</button></div>`);
-  await demoChoose('[data-demo-choice="ind-clients"]');await demoChoose('[data-demo-choice="prod-credit"]');await demoContinue();
+  await demoChoose('[data-demo-choice="ind-clients"]');await demoChoose('[data-demo-choice="prod-credit"]');addMessage('user','Показатель: Количество клиентов · Продукт: Кредитные карты');await demoDelay(1000);await demoContinue();
   await demoAgent('Понял: показатель — «Количество клиентов», продукт — «Кредитные карты», канал — «Мобильное приложение». Точного дубля нет. Комбинация новая, поэтому после создания драйвер будет направлен на согласование.');
   // Самый важный смысловой переход в демо: даём время прочитать вопрос и понять, откуда взялись подсказки.
   demoState.readingBoost=2.05;
@@ -2725,22 +2739,24 @@ async function runFullDemo(){
   demoActions(`<div class="demo-suggestion-note">Подсказки сформированы по показателю «Количество клиентов» и продукту «Кредитные карты».</div><div class="choice-list cost-hint-list"><button class="choice-row" data-demo-choice="costhint"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Доход с одного клиента</strong><span class="choice-explain">Комиссия или другой доход на одну карту / клиента</span></span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Расход на одного клиента</strong><span class="choice-explain">Обслуживание, выпуск или другая стоимость на клиента</span></span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Другая логика</strong><span class="choice-explain">Можно описать влияние своими словами</span></span></button></div>`);
   await demoDelay(3200);
   await demoChoose('[data-demo-choice="costhint"]');
+  addMessage('user','Доход с одного клиента');
   await demoDelay(1700);
   document.getElementById('contextActions').innerHTML='';
   await demoAgent('Сколько в среднем дохода Банку приносит один дополнительный клиент? Можно написать обычным языком.');
   await demoType('Каждый дополнительный клиент приносит 50 рублей комиссионного дохода в месяц');
   await demoAgent('Я понял влияние на прибыль Банка так:\n1 дополнительный клиент = +50 ₽ комиссионного дохода в месяц.\n\nСтоимость драйвера: 50 ₽\nЗа изменение показателя на: 1 клиента.');
-  demoActions(`<button class="demo-primary">Подтвердить расчёт</button><button class="secondary">Изменить логику</button>`);await demoContinue();
+  demoActions(`<button class="demo-primary">Подтвердить расчёт</button><button class="secondary">Изменить логику</button>`);addMessage('user','Подтвердить расчёт');await demoDelay(900);await demoContinue();
   await demoAgent('По описанию «комиссионный доход» я подобрал наиболее релевантные статьи P&L. Выберите одну или несколько.');
-  demoActions(`<div class="demo-suggestion-note">Релевантность определена по смыслу расчёта: доход от клиента + комиссия по карте.</div><div class="candidate-group"><span class="candidate-group-title">Статьи P&amp;L</span><div class="choice-list"><button class="choice-row" data-demo-choice="pl-fee"><span class="choice-marker checkbox"></span><span class="choice-text"><strong>Чистый комиссионный доход (ЧКД)</strong><span class="choice-explain">Наиболее релевантная статья</span></span></button><button class="choice-row"><span class="choice-marker checkbox"></span><span class="choice-text"><strong>Комиссионные доходы по банковским картам</strong><span class="choice-explain">Более детальная комиссионная статья</span></span></button><button class="choice-row"><span class="choice-marker checkbox"></span><span class="choice-text">Операционные доходы</span></button></div></div><button class="pl-confirm">Продолжить · 1</button>`);
+  demoActions(`<div class="demo-suggestion-note">По описанию «комиссионный доход с карты» агент сначала отбирает только доходные комиссионные статьи, а затем ранжирует их по продукту.</div><div class="candidate-group"><span class="candidate-group-title">Статьи P&amp;L</span><div class="choice-list"><button class="choice-row"><span class="choice-marker checkbox"></span><span class="choice-text"><strong>Чистый комиссионный доход (ЧКД)</strong><span class="choice-explain">Укрупнённая комиссионная статья</span></span></button><button class="choice-row" data-demo-choice="pl-card-fee"><span class="choice-marker checkbox"></span><span class="choice-text"><strong>Комиссионные доходы по банковским картам</strong><span class="choice-explain">Наиболее точное соответствие для кредитных карт</span></span></button><button class="choice-row"><span class="choice-marker checkbox"></span><span class="choice-text">Операционные доходы</span></button></div></div><button class="pl-confirm">Продолжить · 1</button>`);
   await demoDelay(3000);
-  await demoChoose('[data-demo-choice="pl-fee"]');
-  await demoDelay(1400);
+  await demoChoose('[data-demo-choice="pl-card-fee"]');
+  addMessage('user','Комиссионные доходы по банковским картам');
+  await demoDelay(1800);
   await demoContinue();
-  await demoAgent('Проверь перед созданием:\n\nПоказатель: Количество клиентов\nПродукт: Кредитные карты\nКанал: Мобильное приложение\nСтоимость драйвера: 50 ₽\nЗа изменение показателя на: 1 клиента\nСтатья: Чистый комиссионный доход');
-  demoActions(`<button class="demo-primary">✓ Создать</button><button class="secondary">Изменить</button>`);await demoDelay(1700);await demoContinue();
+  await demoAgent('Проверь перед созданием:\n\nПоказатель: Количество клиентов\nПродукт: Кредитные карты\nКанал: Мобильное приложение\nСтоимость драйвера: 50 ₽\nЗа изменение показателя на: 1 клиента\nСтатья: Комиссионные доходы по банковским картам');
+  demoActions(`<button class="demo-primary">✓ Создать</button><button class="secondary">Изменить</button>`);await demoDelay(1700);addMessage('user','Создать драйвер');await demoDelay(900);await demoContinue();
   const d=demoFullDriver();drivers=drivers.filter(x=>x.id!==d.id);drivers.unshift(d);indicatorRegistry.find(x=>x.name==='Количество клиентов').status='Активен';combinationRegistry=combinationRegistry.filter(x=>x.id!==d.combinationId);combinationRegistry.push({id:d.combinationId,name:d.combinationName,product:d.product,channel:d.channel,segment:'',status:'Подготовлена'});demoState.tempId=d.id;save();renderRegistry();updateSummary();
-  await demoAgent('Готово. Драйвер создан и направлен на согласование. Открываю карточку.');await demoDelay(700);switchTab('registry');await demoDelay(600);openDriver(d.id);await demoDelay(1800);
+  await demoAgent('Готово. Драйвер создан и направлен на согласование. Открываю карточку.');await demoDelay(700);switchTab('registry');await demoDelay(600);openDriver(d.id);await demoDelay(1200);await demoInspectDriverCard();
   const approve=document.getElementById('approveDriver');if(approve&&!approve.hidden){await demoTap(approve,500);d.status='Готов';const combo=combinationRegistry.find(x=>x.id===d.combinationId);if(combo)combo.status='Активна';save();renderAll();openDriver(d.id);toast('Драйвер согласован');await demoDelay(3500);}
 }
 async function runIncomeDemo(){

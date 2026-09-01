@@ -1,4 +1,4 @@
-const APP_VERSION = globalThis.DRIVER_AGENT_VERSION || '8.1';
+const APP_VERSION = globalThis.DRIVER_AGENT_VERSION || '8.3';
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
 const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.9';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
@@ -1528,6 +1528,78 @@ function looksLikeIndicatorFormulaInsteadOfCost(text,c){
   const outputLooksLikeVolume=/(объем|объём|выдач|оборот|сбор)/i.test(t) || /объем|объём/i.test(normalizeText(c?.indicator||''));
   return hasIndicatorConstruction && outputLooksLikeVolume && !hasPlEconomics;
 }
+
+function looksLikeIndicatorDefinition(text,c={}){
+  const t=normalizeText(text);
+  const indicator=normalizeText(c.indicator||'');
+  const hasRatio=/(доля|отношен|делим|раздел|числител|знаменател|\/|take[ -]?rate|конверс)/i.test(t);
+  const hasDefinitionCue=/(рассчитыва|счита|равен|равна|формул|отражает|показывает|определяет)/i.test(t);
+  const hasMoney=/(₽|руб|доход|расход|чпд|чкд|прибыл|комисс|марж|резерв|стоимост|банку)/i.test(t);
+  const mentionsIndicator=indicator && t.includes(indicator);
+  return !hasMoney && (hasRatio || (hasDefinitionCue && mentionsIndicator));
+}
+function impactBridgeHints(c={}, text=''){
+  const t=normalizeText(`${text} ${c.pendingIndicatorFormula||''} ${c.impactChainText||''}`);
+  if(/take[ -]?rate|выданн.*карт|карт/.test(t)) return ['Дополнительные выданные карты','Доход с дополнительной карты','Расход на дополнительную карту','Опишу всю цепочку'];
+  if(/заяв|конверс/.test(t)) return ['Дополнительные продажи','Дополнительные клиенты','Доход с результата','Опишу всю цепочку'];
+  if(/операц|транзакц/.test(t)) return ['Изменение количества операций','Доход с одной операции','Экономия на одной операции','Опишу всю цепочку'];
+  return ['Промежуточный показатель','Доход с результата','Расход с результата','Опишу всю цепочку'];
+}
+function parseScaledNumber(raw, scale=''){
+  const n=Number(String(raw||'').replace(/\s/g,'').replace(',','.'));
+  if(!Number.isFinite(n)) return null;
+  const s=normalizeText(scale||'');
+  if(s.startsWith('тыс')) return n*1000;
+  if(s.startsWith('млн')) return n*1000000;
+  return n;
+}
+function directImpactChainRule(text,c={}){
+  const raw=String(text||'').replace(/\s+/g,' ');
+  const t=normalizeText(raw);
+  // Универсальный двухзвенный кейс: изменение исходного показателя -> N промежуточных единиц -> X ₽ на единицу.
+  const basis=raw.match(/(?:на|рост(?:е)?|увеличен(?:ие|ии)?|изменен(?:ие|ии)?)[^\d]{0,30}(\d+(?:[.,]\d+)?)\s*(п\.?\s*п\.?|%)/i) || raw.match(/(\d+(?:[.,]\d+)?)\s*(п\.?\s*п\.?|%)/i);
+  const qty=raw.match(/(\d[\d\s]*(?:[.,]\d+)?)\s*(тыс(?:яч)?|млн)?\s*(?:дополнительн(?:ых|ые)?\s*)?(карт|операц(?:ий|ии)?|клиент(?:ов|а)?|продаж(?:и|)?|шт\.?)/i);
+  const perMoney=raw.match(/(?:кажд(?:ая|ый|ую|ой)|на\s+(?:одн(?:у|ой|ого)|1))[^\d₽]{0,50}(?:приносит|дает|даёт|стоит|доход|расход|комисс)?[^\d]{0,20}(\d[\d\s]*(?:[.,]\d+)?)\s*(?:₽|руб)/i)
+    || raw.match(/(\d[\d\s]*(?:[.,]\d+)?)\s*(?:₽|руб)[^\r\n]{0,35}(?:на|за)\s+(?:одн(?:у|ой|ого)|1)\s*(?:карт|операц|клиент|продаж)/i);
+  if(!basis || !qty || !perMoney) return null;
+  const basisValue=Number(basis[1].replace(',','.'));
+  const qtyValue=parseScaledNumber(qty[1],qty[2]||'');
+  const perValue=Number(perMoney[1].replace(/\s/g,'').replace(',','.'));
+  if(!(basisValue>0) || !(qtyValue>0) || !(perValue>0)) return null;
+  const amount=qtyValue*perValue;
+  const unit=basis[2].includes('%')?'%':'п.п.';
+  const basisText=`Изменение показателя на ${formatMoney(basisValue)} ${unit}`;
+  const intermediate=`${formatMoney(qtyValue)} ${qty[3]}`;
+  return {type:'constant',amount,start:amount,months:1,unitEconomics:true,basisText,impactChain:true,
+    businessRationale:`${basisText} приводит к ${intermediate}; финансовый эффект на одну промежуточную единицу — ${formatMoney(perValue)} ₽. Итоговое влияние на прибыль Банка — ${formatMoney(amount)} ₽.`};
+}
+function looksLikeImpactChainWithoutMoney(text){
+  const t=normalizeText(text);
+  const hasChain=/(следовательно|далее|затем|приводит|влияет|через|→|=>|выданн|продаж|клиент|операц)/i.test(t);
+  const hasMoney=/(₽|руб|доход\s+\d|расход\s+\d|комисс.*\d)/i.test(t);
+  return hasChain && !hasMoney;
+}
+async function interpretImpactMeaning(text,c={}){
+  const system=`Ты классифицируешь бизнес-описание в процессе расчёта стоимости финансового драйвера. Пользователь может описывать: (1) формулу самого показателя, (2) промежуточную цепочку влияния показателя на другой бизнес-показатель, (3) прямой финансовый эффект, (4) полную цепочку до прибыли Банка. Не требуй временной профиль, если пользователь его не описывал.
+Верни ТОЛЬКО JSON: {kind, definition, chain, missing}. kind один из indicator_definition, impact_chain, direct_financial_effect, unclear. chain — массив коротких шагов обычным русским языком. missing — один конкретный недостающий бизнес-параметр или пустая строка.`;
+  const controller=new AbortController(); const timer=setTimeout(()=>controller.abort(),LLM_REQUEST_TIMEOUT_MS);
+  try{
+    const response=await fetch(LLM_API_URL,{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify({messages:[{role:'system',content:system},{role:'user',content:`Показатель: ${c.indicator||''}
+Продукт: ${c.product||''}
+Сообщение: ${text}`}]}),signal:controller.signal});
+    const payload=await response.json().catch(()=>({}));
+    const content=payload?.choices?.[0]?.message?.content; if(!response.ok || !content) return null;
+    const data=JSON.parse(cleanJsonText(content));
+    if(!['indicator_definition','impact_chain','direct_financial_effect','unclear'].includes(data.kind)) return null;
+    return {kind:data.kind,definition:String(data.definition||''),chain:Array.isArray(data.chain)?data.chain.map(String).slice(0,6):[],missing:String(data.missing||'')};
+  }catch{return null;} finally{clearTimeout(timer);}
+}
+function impactChainSummary(c={}){
+  const parts=[];
+  if(c.pendingIndicatorFormula) parts.push(`Как считается показатель: ${c.pendingIndicatorFormula}`);
+  if(c.impactChainText) parts.push(`Цепочка влияния: ${c.impactChainText}`);
+  return parts.join('\n');
+}
 function relevantCostHints(c={}){
   const product=normalizeText(c.product||''), indicator=normalizeText(c.indicator||'');
   if(product.includes('карт')) return ['Доход с одной карты','Расход на одну карту','Другая логика'];
@@ -1625,19 +1697,72 @@ function handleFlowAnswer(text) {
     if(!n || n<=0){ addMessage('agent','Укажи срок кредита в годах, например 1, 2 или 3.'); return; }
     c.modelParams={...(c.modelParams||{}),creditTermYears:String(n)};
   }
-  else if (flow.step === 'costRule') {
-    if(looksLikeIndicatorFormulaInsteadOfCost(text,c)){
-      c.pendingIndicatorFormula=text; save();
-      addMessage('agent', `Похоже, эта формула рассчитывает сам показатель «${c.indicator}», а не его финансовую стоимость. Например, количество × средний чек может дать объём выдач, но ещё не показывает влияние на P&L.
-
-Продолжи логику до финансового эффекта: через маржу, комиссии, риск, резервы, расходы — либо укажи стоимость единицы драйвера напрямую.`);
-      return ask('costRule','Как изменение этого показателя влияет на прибыль Банка?');
+  else if (flow.step === 'costRule' || flow.step === 'impactBridge') {
+    const bridgeChoice=normalizeText(text);
+    if(flow.step==='impactBridge' && ['дополнительные выданные карты','дополнительные продажи','дополнительные клиенты','изменение количества операций','промежуточный показатель'].includes(bridgeChoice)){
+      c.impactChainText=[c.impactChainText,text].filter(Boolean).join(' → '); flow.step=''; save();
+      return ask('impactBridge',`Хорошо. Насколько меняется «${text}» при изменении исходного показателя? Можно сразу дописать и денежный эффект. Например: «+1 п.п. даёт 10 тыс. карт, каждая приносит 500 ₽».`,[], 'clarification');
     }
-    flow.pendingCostLogic=text; flow.step='formulaParsing'; save(); addMessage('agent','Проверяю логику финансового эффекта и собираю расчёт…');
+    if(flow.step==='impactBridge' && ['доход с дополнительной карты','расход на дополнительную карту','доход с результата','расход с результата','доход с одной операции','экономия на одной операции'].includes(bridgeChoice)){
+      flow.step=''; save();
+      return ask('impactBridge',`Укажи денежную связь обычным языком. Например: «одна дополнительная карта приносит 500 ₽ ЧКД». Если знаешь, сразу добавь, сколько таких единиц даёт изменение исходного показателя.`,[], 'clarification');
+    }
+    if(flow.step==='impactBridge' && ['опишу всю цепочку','другая логика'].includes(bridgeChoice)){
+      flow.step=''; save();
+      return ask('impactBridge','Опиши всю цепочку от изменения показателя до прибыли Банка. Можно одной фразой, например: «+1 п.п. → +10 тыс. карт → 500 ₽ ЧКД с карты».',[], 'clarification');
+    }
+    const accumulatedImpact=[c.impactChainText,text].filter(Boolean).join(' → ');
+    const completeChain=directImpactChainRule(accumulatedImpact,c);
+    let directRule=completeChain||(!c.impactChainText?directUnitEconomicsRule(text,c):null)||directConstantRule(text);
+    if(flow.step==='impactBridge' && c.impactChainText && !completeChain && directUnitEconomicsRule(text,c)){
+      c.impactChainText=accumulatedImpact; flow.step=''; save();
+      return ask('impactBridge',`Понял денежный шаг. Теперь нужно связать его с исходным показателем «${c.indicator}»: какое изменение исходного показателя даёт этот промежуточный результат? Например: «+1 п.п. take-rate даёт 10 тыс. дополнительных карт».`,[], 'clarification');
+    }
+    const definitionLike=looksLikeIndicatorDefinition(text,c)||looksLikeIndicatorFormulaInsteadOfCost(text,c);
+    if(definitionLike && !directRule){
+      c.pendingIndicatorFormula=text;
+      c.impactChainText=c.impactChainText||'';
+      save();
+      addMessage('agent', `Понял: сейчас ты описал, как рассчитывается сам показатель «${c.indicator}». Я сохраню это определение и не буду путать его со стоимостью драйвера.
+
+Теперь свяжем показатель с прибылью Банка. Что меняется в бизнесе, когда «${c.indicator}» растёт или снижается?`);
+      return ask('impactBridge','Можно выбрать ближайший шаг или описать всю цепочку своими словами.',impactBridgeHints(c,text),'choice');
+    }
+    if(!directRule && looksLikeImpactChainWithoutMoney(text)){
+      c.impactChainText=[c.impactChainText,text].filter(Boolean).join(' → '); save();
+      addMessage('agent', `Понял промежуточную цепочку влияния:
+${c.impactChainText}
+
+До финансового эффекта не хватает денежной связи. Например: сколько дохода или расхода приходится на получившуюся карту, клиента, операцию или другую единицу результата.`);
+      return ask('impactBridge','Как этот результат влияет на прибыль Банка?',impactBridgeHints(c,text),'choice');
+    }
+    flow.pendingCostLogic=text; flow.step='formulaParsing'; save(); addMessage('agent','Проверяю логику влияния и собираю расчёт…');
     (async()=>{
-      let f=directUnitEconomicsRule(text,c)||directConstantRule(text); try{ if(!f) f=await interpretCostLogic(text); }catch{ if(!f) f=localInterpretCostLogic(text); }
+      let f=directRule;
+      if(!f){
+        const meaning=await interpretImpactMeaning(text,c);
+        if(!flow) return;
+        if(meaning?.kind==='indicator_definition'){
+          c.pendingIndicatorFormula=meaning.definition||text; flow.step='impactBridge'; save();
+          addMessage('agent', `Понял: это определение самого показателя, а не его стоимость. Сохранил его отдельно.
+
+Теперь нужен следующий шаг: что меняется в бизнесе при изменении «${c.indicator}»?`);
+          flow.options=impactBridgeHints(c,text); flow.stepKind='choice'; flow.phase='USER_CHOICE'; renderContextActions(); renderProgress(); return;
+        }
+        if(meaning?.kind==='impact_chain'){
+          c.impactChainText=(meaning.chain||[]).join(' → ')||text; flow.step='impactBridge'; save();
+          addMessage('agent', `Я понял цепочку так:
+${c.impactChainText}
+
+${meaning.missing?`Не хватает одного параметра: ${meaning.missing}`:'Не хватает денежного шага до прибыли Банка.'}`);
+          flow.options=impactBridgeHints(c,text); flow.stepKind='choice'; flow.phase='USER_CHOICE'; renderContextActions(); renderProgress(); return;
+        }
+        try{ f=await interpretCostLogic(text); }catch{ f=localInterpretCostLogic(text); }
+      }
       if(!flow) return;
-      if(!f){ flow.step='costRule'; save(); addMessage('agent','Не смог однозначно понять правило. Укажи начальное значение, как оно меняется и срок расчёта.'); renderContextActions(); return; }
+      if(!f){ flow.step='impactBridge'; save(); addMessage('agent',`Я пока вижу бизнес-логику, но не могу посчитать стоимость без денежной связи. ${impactChainSummary(c)}
+
+Укажи только недостающее: сколько дохода или расхода получает Банк от результата цепочки. Срок расчёта сейчас не нужен.`); flow.options=impactBridgeHints(c,text); flow.stepKind='choice'; flow.phase='USER_CHOICE'; renderContextActions(); renderProgress(); return; }
       if(f.type!=='two_stage' && !f.months){ f.months=1; }
       c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f)||text; c.businessRationale=f.businessRationale||c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
       // v8.0: база, явно указанная пользователем, является authoritative и не может быть
@@ -1780,7 +1905,7 @@ function finalizeDriver() {
   const combinationExists=combinationRegistry.some(x=>x.key===combinationKey);
   const needsApproval = indicator.status==='Подготовлен' || !combinationExists;
   const combo=ensureCombination(c, combinationExists?'Активна':'Подготовлена');
-  const driver={ id:String(Date.now()), name:buildDriverName(c), indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', calcMethod:c.calcMethod||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', modelId:c.modelId||'', modelParams:c.modelParams||null, plAllocations:c.plAllocations||[], incrementMode:c.incrementMode||inferIncrementMode(c), channel:c.channel||'', segment:c.segment||'', combinationId:combo?.id||'', combinationName:combo?.name||'', status:needsApproval?'На согласовании':'Готов' };
+  const driver={ id:String(Date.now()), name:buildDriverName(c), indicator:c.indicator, product:c.product, unit:c.unit, effectType:c.effectType, base:c.base, cost:c.cost, costMode:c.costMode||'single', calcMethod:c.calcMethod||'single', costProfile:c.costMode==='monthly'?(c.costProfile||[]):[c.cost], costLogicText:c.costLogicText||'', costFormula:c.costFormula||null, businessRationale:c.businessRationale||'', indicatorDefinition:c.pendingIndicatorFormula||'', impactChainText:c.impactChainText||'', modelId:c.modelId||'', modelParams:c.modelParams||null, plAllocations:c.plAllocations||[], incrementMode:c.incrementMode||inferIncrementMode(c), channel:c.channel||'', segment:c.segment||'', combinationId:combo?.id||'', combinationName:combo?.name||'', status:needsApproval?'На согласовании':'Готов' };
   drivers.unshift(driver); flow=null; lastCreatedDriverId=driver.id; save(); renderRegistry(); renderDictionaries(); updateSummary(); renderProgress();
   addMessage('agent', needsApproval ? `Готово. «${driver.name}» создан и направлен на согласование. После согласования он станет доступен для использования.` : `Готово. «${driver.name}» создан со статусом «Готов».`);
   renderContextActions();
@@ -1828,6 +1953,9 @@ function renderContextActions() {
     el.innerHTML=`<button data-flow-action="createFromModel">Создать драйвер</button><button data-flow-action="viewModelCalc" class="secondary">Посмотреть расчёт</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='modelDetails') {
     el.innerHTML=`<button data-flow-action="createFromModel">Создать драйвер</button><button data-flow-action="redoModel" class="secondary">Параметры</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
+  } else if (flow.step==='impactBridge') {
+    const opts=(flow.options&&flow.options.length)?flow.options:impactBridgeHints(flow.candidate);
+    el.innerHTML=`<div class="choice-list impact-bridge-list">${opts.map(o=>`<button type="button" class="choice-row" data-flow-value="${escapeHtml(o)}"><span class="choice-marker radio">○</span><span class="choice-text">${escapeHtml(o)}</span></button>`).join('')}</div><button data-flow-action="cancel" class="choice-cancel">Отмена</button>`;
   } else if (flow.step==='formulaConfirm') {
     el.innerHTML=`<button data-flow-action="confirmFormula">✓ Подтвердить расчёт</button><button data-flow-action="redoFormula" class="secondary">Изменить логику</button><button data-flow-action="cancel" class="quiet">Отмена</button>`;
   } else if (flow.step==='plArticles') {
@@ -1856,7 +1984,7 @@ function flowProgressStage(){
     return {stage:2,total:6,label:'Уточняю данные'};
   if(['duplicate','duplicateAnalytics','similar'].includes(step) || !flow.duplicateChecked)
     return {stage:3,total:6,label:'Проверяю реестр'};
-  if(['costIntro','modelChoice','calcMethod','modelAvgCheck','modelConversion','modelMargin','modelRisk','modelRepayment','modelHorizon','modelCreditTerm','costRule','formulaMonths','formulaConfirm','costProfile','cost','base','effectType','plArticle','plArticles','plSplitMode','plSplitPercent','modelResult','modelDetails'].includes(step) || !(c.costProfile||[]).length)
+  if(['costIntro','modelChoice','calcMethod','modelAvgCheck','modelConversion','modelMargin','modelRisk','modelRepayment','modelHorizon','modelCreditTerm','costRule','impactBridge','formulaMonths','formulaConfirm','costProfile','cost','base','effectType','plArticle','plArticles','plSplitMode','plSplitPercent','modelResult','modelDetails'].includes(step) || !(c.costProfile||[]).length)
     return {stage:4,total:6,label:'Определяю стоимость'};
   if(step==='preview') return {stage:5,total:6,label:'Проверяю результат'};
   return {stage:5,total:6,label:'Готовлю создание'};
@@ -2097,7 +2225,7 @@ for(const tab of document.querySelectorAll('.tab')) tab.addEventListener('click'
 function updatePromptPlaceholder(){
   const input=document.getElementById('prompt'); if(!input) return;
   if(!flow){ input.placeholder='Например: создай драйвер объёма выдач по ипотеке'; return; }
-  const map={indicator:'Напиши показатель…',product:'Напиши продукт…',channel:'Напиши канал…',segment:'Напиши сегмент…',effectType:'Доходы или расходы…',base:'Укажи базу расчёта…',costRule:'Опиши логику финансового эффекта…',costProfile:'Укажи стоимость или вставь профиль…',plArticles:'Напиши название статьи P&L…',plSplitPercent:'Укажи доли статей…',editMenu:'Выбери, что изменить…'};
+  const map={indicator:'Напиши показатель…',product:'Напиши продукт…',channel:'Напиши канал…',segment:'Напиши сегмент…',effectType:'Доходы или расходы…',base:'Укажи базу расчёта…',costRule:'Опиши влияние на прибыль Банка…',impactBridge:'Опиши следующий шаг влияния…',costProfile:'Укажи стоимость или вставь профиль…',plArticles:'Напиши название статьи P&L…',plSplitPercent:'Укажи доли статей…',editMenu:'Выбери, что изменить…'};
   input.placeholder=map[flow.step]||'Введите сообщение…';
 }
 function submitPrompt(){

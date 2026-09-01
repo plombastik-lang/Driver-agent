@@ -1,4 +1,4 @@
-const APP_VERSION = globalThis.DRIVER_AGENT_VERSION || '7.6';
+const APP_VERSION = globalThis.DRIVER_AGENT_VERSION || '7.7';
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
 const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.9';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
@@ -2386,7 +2386,7 @@ document.querySelector('[data-close-settings]')?.addEventListener('click',closeS
 // Единый источник версии для интерфейса и диагностики.
 document.querySelectorAll('.version-pill').forEach(el=>el.textContent=`v${APP_VERSION}`);
 
-// v7.6 — автономный демо-режим для записи руководительского сценария.
+// v7.7 — режиссируемое демо: видимые действия пользователя без системной клавиатуры.
 const demoState={running:false,paused:false,token:0,snapshot:null,tempId:null};
 function demoDelay(ms){
   const factor=Number(document.getElementById('demoSpeed')?.value||1);
@@ -2394,51 +2394,61 @@ function demoDelay(ms){
 }
 async function demoType(text){
   const input=document.getElementById('prompt'); if(!input)return;
-  input.value=''; input.focus();
-  for(const ch of text){if(!demoState.running)return;while(demoState.paused) await new Promise(r=>setTimeout(r,100));input.value+=ch;input.dispatchEvent(new Event('input',{bubbles:true}));await demoDelay(28);}
-  await demoDelay(450); input.value=''; addMessage('user',text);
+  input.blur(); input.value=''; input.classList.add('demo-typing');
+  for(const ch of text){if(!demoState.running)return;while(demoState.paused) await new Promise(r=>setTimeout(r,100));input.value+=ch;input.dispatchEvent(new Event('input',{bubbles:true}));await demoDelay(32);}
+  await demoDelay(550);
+  const send=document.getElementById('send'); if(send){await demoTap(send,500);}
+  input.value='';input.classList.remove('demo-typing');addMessage('user',text);await demoDelay(650);
 }
-async function demoAgent(text,wait=1150){ await demoDelay(wait); if(demoState.running)addMessage('agent',text); }
-function demoSnapshot(){ return {drivers:clone(drivers),messages:clone(messages),flow:clone(flow)}; }
-function restoreDemoSnapshot(){
-  if(!demoState.snapshot)return;
-  drivers=clone(demoState.snapshot.drivers);messages=clone(demoState.snapshot.messages);flow=clone(demoState.snapshot.flow);demoState.snapshot=null;demoState.tempId=null;save();renderAll();
+async function demoTap(el,after=700){
+  if(!el||!demoState.running)return;
+  el.scrollIntoView({behavior:'smooth',block:'center'});await demoDelay(350);
+  const r=el.getBoundingClientRect();const dot=document.createElement('div');dot.className='demo-finger';dot.style.left=`${r.left+r.width*.78}px`;dot.style.top=`${r.top+r.height*.55}px`;document.body.appendChild(dot);el.classList.add('demo-tap');await demoDelay(520);dot.remove();el.classList.remove('demo-tap');await demoDelay(after);
 }
-function showDemoPanel(){ closeSettingsModal();document.getElementById('demoPanel').hidden=false;document.getElementById('demoScenarioPicker').hidden=false;document.getElementById('demoControls').hidden=true;document.getElementById('demoTitle').textContent='Выберите сценарий'; }
-function endDemo(restore=true){demoState.running=false;demoState.paused=false;demoState.token++;document.body.classList.remove('demo-recording');document.getElementById('demoPause').textContent='Пауза';if(restore)restoreDemoSnapshot();document.getElementById('demoScenarioPicker').hidden=false;document.getElementById('demoControls').hidden=true;document.getElementById('demoTitle').textContent='Выберите сценарий';}
+async function demoAgent(text,wait=950){await demoDelay(wait);if(demoState.running){addMessage('agent',text);await demoDelay(500);}}
+function demoActions(html){const el=document.getElementById('contextActions');el.innerHTML=`<div class="demo-choice-box">${html}</div>`;el.scrollIntoView({behavior:'smooth',block:'end'});}
+async function demoChoose(selector,selectedText){const el=document.querySelector(selector);await demoTap(el,500);if(el){el.classList.add('selected');const mark=el.querySelector('.choice-marker');if(mark)mark.textContent='●';}if(selectedText)await demoDelay(450);}
+async function demoContinue(){const b=document.querySelector('#contextActions .choice-primary, #contextActions .demo-primary');await demoTap(b,650);document.getElementById('contextActions').innerHTML='';}
+function demoSnapshot(){return {drivers:clone(drivers),messages:clone(messages),flow:clone(flow)};}
+function restoreDemoSnapshot(){if(!demoState.snapshot)return;drivers=clone(demoState.snapshot.drivers);messages=clone(demoState.snapshot.messages);flow=clone(demoState.snapshot.flow);demoState.snapshot=null;demoState.tempId=null;save();renderAll();}
+function showDemoPanel(){closeSettingsModal();document.getElementById('demoPanel').hidden=false;document.getElementById('demoScenarioPicker').hidden=false;document.getElementById('demoControls').hidden=true;document.getElementById('demoTitle').textContent='Выберите сценарий';}
+function endDemo(restore=true){demoState.running=false;demoState.paused=false;demoState.token++;document.body.classList.remove('demo-recording');document.getElementById('prompt')?.blur();document.getElementById('contextActions').innerHTML='';document.getElementById('demoPause').textContent='Пауза';if(restore)restoreDemoSnapshot();document.getElementById('demoPanel').hidden=false;document.getElementById('demoScenarioPicker').hidden=false;document.getElementById('demoControls').hidden=true;document.getElementById('demoTitle').textContent='Выберите сценарий';}
 function closeDemoPanel(){endDemo(true);document.getElementById('demoPanel').hidden=true;switchTab('chat');}
-function demoDriverIncome(){
-  const d={id:'demo-live-income',name:'Объём выдач Ипотечное кредитование',indicator:'Объём выдач',product:'Ипотечное кредитование',unit:'₽',effectType:'Доходы',base:'1000000',channel:'',segment:'',incrementMode:'annual_spread',calcMethod:'model',modelId:'credit_income_v2',modelParams:{margin:'12',risk:'2.4',repayment:'2',creditTermYears:'15',horizon:36,sources:{margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},costMode:'monthly',costProfile:[],plAllocations:[],costLogicText:'',businessRationale:'',status:'Готов'};
-  const r=calculateModel(d);d.costProfile=(r.profile||[]).map(String);d.plAllocations=r.allocations||[];d.costLogicText=modelLogicText(d);d.businessRationale=modelBusinessRationale(d);return d;
-}
-function demoDriverExpense(){return {id:'demo-live-expense',name:'Количество продаж Платежи',indicator:'Количество продаж',product:'Платежи',unit:'шт.',effectType:'Расходы',direction:'Сокращение',base:'1000',channel:'',segment:'',incrementMode:'annual_spread',calcMethod:'rule',modelId:'',modelParams:null,costMode:'monthly',costProfile:['-100000','-100000','-100000','-100000','-100000','-100000'],plAllocations:[{article:'Прочие расходы',profile:['-100000','-100000','-100000','-100000','-100000','-100000']}],costLogicText:'Сокращение 1 000 операций снижает расходы на 100 000 ₽ ежемесячно в течение 6 месяцев.',businessRationale:'Снижение операционной нагрузки формирует прямое сокращение расходов.',status:'Готов'};}
+function demoDriverIncome(){const d={id:'demo-live-income',name:'Объём выдач Ипотечное кредитование',indicator:'Объём выдач',product:'Ипотечное кредитование',unit:'₽',effectType:'Доходы',base:'1000000',channel:'',segment:'',incrementMode:'annual_spread',calcMethod:'model',modelId:'credit_income_v2',modelParams:{margin:'12',risk:'2.4',repayment:'2',creditTermYears:'15',horizon:36,sources:{margin:'Прогнозная модель',risk:'Прогнозная модель',repayment:'Прогнозная модель',creditTermYears:'Прогнозная модель'},sourcePeriod:'Среднее за последние 3 месяца прогнозного года'},costMode:'monthly',costProfile:[],plAllocations:[],costLogicText:'',businessRationale:'',status:'Готов'};const r=calculateModel(d);d.costProfile=(r.profile||[]).map(String);d.plAllocations=r.allocations||[];d.costLogicText=modelLogicText(d);d.businessRationale=modelBusinessRationale(d);return d;}
+function demoDriverExpense(){return {id:'demo-live-expense',name:'Количество операций Платежи',indicator:'Количество операций',product:'Платежи',unit:'шт.',effectType:'Расходы',direction:'Сокращение',base:'1000',channel:'',segment:'',incrementMode:'annual_spread',calcMethod:'rule',modelId:'',modelParams:null,costMode:'monthly',costProfile:['-100000','-100000','-100000','-100000','-100000','-100000'],plAllocations:[{article:'Прочие расходы',profile:['-100000','-100000','-100000','-100000','-100000','-100000']}],costLogicText:'Сокращение 1 000 операций снижает расходы на 100 000 ₽ ежемесячно в течение 6 месяцев.',businessRationale:'Снижение количества операций сокращает операционные расходы.',status:'Готов'};}
 async function runIncomeDemo(){
   await demoType('Создай драйвер выдач по ипотеке');
-  await demoAgent('Нашёл два подходящих показателя: «Количество выдач» и «Объём выдач». Продукт определён однозначно — «Ипотечное кредитование». Для демонстрации выбираю «Объём выдач».');
-  await demoAgent('Проверяю справочники и существующие драйверы…');
-  await demoAgent('Драйвер определён: «Объём выдач · Ипотечное кредитование». Перехожу к формированию стоимости.');
-  await demoAgent('Для этого драйвера доступна модель «Кредиты». Использую прогнозные параметры: маржа, уровень риска, погашение и срок кредита. База расчёта — +1 млн ₽ объёма выдач.');
-  await demoAgent('Стоимость рассчитана. Эффект сформирован помесячно и распределён на «Чистый процентный доход» и «Расходы на резервы».');
-  await demoAgent('Проверка пройдена: расчёт воспроизводим, профиль ненулевой, статьи P&L определены. Создаю драйвер.');
-  const d=demoDriverIncome();drivers=drivers.filter(x=>x.id!==d.id);drivers.unshift(d);demoState.tempId=d.id;renderRegistry();updateSummary();await demoDelay(900);
-  addMessage('agent','Готово. Драйвер создан и доступен в реестре. Открываю карточку.');await demoDelay(1100);switchTab('registry');await demoDelay(700);openDriver(d.id);
+  await demoAgent('Нашёл несколько вариантов показателя. Продукт определён однозначно. Выберите, что именно вы имеете в виду.');
+  demoActions(`<div class="candidate-group"><span class="candidate-group-title">Показатель</span><div class="choice-list"><button class="choice-row" data-demo-choice="volume"><span class="choice-marker radio">○</span><span class="choice-text">Объём выдач</span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text">Количество выдач</span></button></div></div><div class="candidate-group"><span class="candidate-group-title">Продукт</span><div class="choice-list"><button class="choice-row selected"><span class="choice-marker radio">●</span><span class="choice-text">Ипотечное кредитование</span></button></div></div><div class="choice-footer"><button class="choice-primary">Продолжить</button></div>`);
+  await demoChoose('[data-demo-choice="volume"]');await demoContinue();
+  await demoAgent('Драйвер определён: «Объём выдач · Ипотечное кредитование». Точного дубля не найдено. Перейдём к формированию стоимости.');
+  demoActions(`<button class="demo-primary">Определить стоимость</button>`);await demoContinue();
+  await demoAgent('Для этого драйвера доступна модель расчёта «Кредиты». База расчёта — +1 млн ₽ объёма выдач. Использовать модель?');
+  demoActions(`<button class="demo-primary">Использовать модель</button><button class="secondary">Другая логика стоимости</button>`);await demoContinue();
+  await demoAgent('Использую прогнозные параметры модели: маржу, уровень риска, погашение и срок кредита. Параметры получены из прогнозной модели и в этом расчёте не редактируются.');
+  await demoAgent('Стоимость рассчитана. Эффект сформирован помесячно и распределён на «Чистый процентный доход» и «Расходы на резервы».',1200);
+  demoActions(`<div class="demo-result"><strong>Расчёт готов</strong><span>База: +1 млн ₽ объёма выдач</span><span>P&amp;L: ЧПД + Расходы на резервы</span></div><button class="demo-primary">Создать драйвер</button>`);await demoDelay(2500);await demoContinue();
+  const d=demoDriverIncome();drivers=drivers.filter(x=>x.id!==d.id);drivers.unshift(d);demoState.tempId=d.id;renderRegistry();updateSummary();await demoAgent('Готово. Драйвер создан со статусом «Готов». Открываю карточку результата.',500);await demoDelay(900);switchTab('registry');await demoDelay(700);openDriver(d.id);await demoDelay(4200);
 }
 async function runExpenseDemo(){
   await demoType('Создай драйвер сокращения количества операций по платежам');
-  await demoAgent('Определяю драйвер: показатель «Количество продаж», продукт «Платежи». Направление изменения фиксирую отдельно от показателя — «Сокращение».');
-  await demoAgent('Проверяю справочники, комбинацию аналитик и существующие драйверы… Дубль не найден.');
-  await demoAgent('Тип эффекта — «Расходы». База стоимости — сокращение 1 000 операций.');
-  await demoAgent('Типовой модели нет. Применяю заданную бизнес-логику стоимости: сокращение 1 000 операций снижает расходы на 100 000 ₽ ежемесячно в течение 6 месяцев.');
-  await demoAgent('Профиль рассчитан. Для расходного эффекта подобраны только расходные статьи P&L. Выбираю «Прочие расходы».');
-  await demoAgent('Проверка пройдена. Создаю драйвер и открываю карточку результата.');
-  const d=demoDriverExpense();drivers=drivers.filter(x=>x.id!==d.id);drivers.unshift(d);demoState.tempId=d.id;renderRegistry();updateSummary();await demoDelay(800);addMessage('agent','Готово. Драйвер создан.');await demoDelay(900);switchTab('registry');await demoDelay(650);openDriver(d.id);
+  await demoAgent('Определил показатель «Количество операций» и продукт «Платежи». Направление изменения — сокращение. Подтвердите драйвер.');
+  demoActions(`<div class="demo-result"><strong>Количество операций · Платежи</strong><span>Показатель: Количество операций</span><span>Продукт: Платежи</span></div><button class="demo-primary">Продолжить</button>`);await demoContinue();
+  await demoAgent('Точного дубля не найдено. Для стоимости фиксирую тип эффекта «Расходы» и направление «Сокращение».');
+  demoActions(`<div class="candidate-group"><span class="candidate-group-title">База стоимости</span><div class="choice-list"><button class="choice-row selected"><span class="choice-marker radio">●</span><span class="choice-text">Сокращение 1 000 операций</span></button></div></div><div class="choice-footer"><button class="choice-primary">Продолжить</button></div>`);await demoDelay(900);await demoContinue();
+  await demoAgent('Типовой модели нет. Укажите логику расчёта стоимости.');
+  await demoType('Сокращение 1 000 операций снижает расходы на 100 000 рублей ежемесячно в течение 6 месяцев');
+  await demoAgent('Логика понятна. Рассчитал ненулевой профиль стоимости: −100 000 ₽ ежемесячно в течение 6 месяцев.');
+  await demoAgent('Для расходного эффекта предлагаю только расходные статьи P&L. Выберите одну или несколько.');
+  demoActions(`<div class="candidate-group"><span class="candidate-group-title">Статьи P&amp;L</span><div class="choice-list"><button class="choice-row" data-demo-choice="expensepl"><span class="choice-marker radio">○</span><span class="choice-text">Прочие расходы</span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text">Операционные расходы</span></button></div></div><div class="choice-footer"><button class="choice-primary">Продолжить</button></div>`);await demoChoose('[data-demo-choice="expensepl"]');await demoContinue();
+  await demoAgent('Проверка пройдена: драйвер определён, стоимость ненулевая, P&L заполнен.');
+  demoActions(`<div class="demo-result"><strong>Количество операций · Платежи</strong><span>Расходы · Сокращение</span><span>База: −1 000 операций</span><span>Стоимость: −100 000 ₽ / месяц · 6 месяцев</span><span>P&amp;L: Прочие расходы</span></div><button class="demo-primary">Создать драйвер</button>`);await demoDelay(2600);await demoContinue();
+  const d=demoDriverExpense();drivers=drivers.filter(x=>x.id!==d.id);drivers.unshift(d);demoState.tempId=d.id;renderRegistry();updateSummary();await demoAgent('Готово. Драйвер создан со статусом «Готов». Открываю карточку результата.',500);await demoDelay(900);switchTab('registry');await demoDelay(650);openDriver(d.id);await demoDelay(4200);
 }
 async function startDemo(kind){
-  if(demoState.running)return; if(demoState.snapshot)restoreDemoSnapshot();
-  demoState.snapshot=demoSnapshot();demoState.running=true;demoState.paused=false;demoState.token++;const token=demoState.token;
-  messages=clone(seedMessages);flow=null;save();renderAll();switchTab('chat');document.body.classList.add('demo-recording');
-  document.getElementById('demoScenarioPicker').hidden=true;document.getElementById('demoControls').hidden=false;document.getElementById('demoTitle').textContent=kind==='income'?'Доходный драйвер':'Расходный драйвер';
-  try{if(kind==='income')await runIncomeDemo();else await runExpenseDemo();}finally{if(token===demoState.token){demoState.running=false;demoState.paused=false;document.getElementById('demoPause').textContent='Повторить';document.body.classList.remove('demo-recording');}}
+  if(demoState.running)return;if(demoState.snapshot)restoreDemoSnapshot();demoState.snapshot=demoSnapshot();demoState.running=true;demoState.paused=false;demoState.token++;const token=demoState.token;
+  messages=clone(seedMessages);flow=null;save();renderAll();switchTab('chat');document.getElementById('prompt')?.blur();document.body.classList.add('demo-recording');document.getElementById('demoScenarioPicker').hidden=true;document.getElementById('demoControls').hidden=false;document.getElementById('demoTitle').textContent=kind==='income'?'Доходный драйвер':'Сокращение расходов';
+  try{if(kind==='income')await runIncomeDemo();else await runExpenseDemo();}finally{if(token===demoState.token){demoState.running=false;demoState.paused=false;document.getElementById('demoPause').textContent='Повторить';document.body.classList.remove('demo-recording');document.getElementById('demoPanel').hidden=false;}}
 }
 document.getElementById('openDemoMode')?.addEventListener('click',showDemoPanel);
 document.getElementById('closeDemoMode')?.addEventListener('click',closeDemoPanel);

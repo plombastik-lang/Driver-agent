@@ -319,3 +319,15 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
 .demo-panel-head{display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:10px}.demo-panel-head>div{display:flex;flex-direction:column;gap:2px}.demo-panel-head span{font-size:10px;font-weight:800;letter-spacing:.12em;opacity:.55}.demo-panel-head strong{font-size:14px}.demo-panel-head button{border:0;background:transparent;font-size:24px;line-height:1;cursor:pointer}.demo-scenarios{display:grid;gap:8px}.demo-scenarios button{border:1px solid rgba(0,0,0,.1);background:transparent;border-radius:13px;padding:11px 12px;text-align:left;display:flex;flex-direction:column;gap:3px;cursor:pointer}.demo-scenarios button strong{font-size:13px}.demo-scenarios button small{font-size:11px;opacity:.62}.demo-controls{display:flex;align-items:center;gap:7px;flex-wrap:wrap}.demo-controls button,.demo-controls select{border:1px solid rgba(0,0,0,.12);background:transparent;border-radius:10px;padding:7px 9px;font:inherit;font-size:12px}.demo-controls label{margin-left:auto;font-size:11px;opacity:.72}.demo-recording #settingsGear{visibility:hidden}.demo-recording .chat-session-bar{visibility:hidden}.demo-recording .version-pill{visibility:hidden}
 .demo-tap{animation:demoTap .65s ease}@keyframes demoTap{0%{box-shadow:0 0 0 0 rgba(0,0,0,.2)}50%{box-shadow:0 0 0 8px rgba(0,0,0,.06)}100%{box-shadow:none}}
 @media(max-width:600px){.demo-panel{top:8px;right:8px;width:calc(100vw - 16px);border-radius:15px;padding:9px}.demo-panel-head{margin-bottom:7px}.demo-scenarios{grid-template-columns:1fr 1fr}.demo-scenarios button{padding:8px}.demo-scenarios button small{display:none}}
+/* v7.7 demo recording UX */
+.demo-recording #demoPanel{display:none!important}
+.demo-recording #prompt{pointer-events:none;caret-color:transparent}
+.demo-recording #send{pointer-events:none}
+.demo-typing{box-shadow:0 0 0 2px rgba(0,0,0,.06)}
+.demo-choice-box{display:grid;gap:10px;width:100%}
+.demo-choice-box>button{width:100%}
+.demo-primary{border:0;border-radius:12px;padding:11px 14px;font:inherit;font-weight:700;background:var(--text,#171717);color:var(--surface,#fff);cursor:pointer}
+.demo-result{display:grid;gap:5px;padding:12px;border:1px solid rgba(0,0,0,.09);border-radius:13px;background:rgba(0,0,0,.025)}
+.demo-result strong{font-size:13px}.demo-result span{font-size:12px;opacity:.72}
+.demo-finger{position:fixed;z-index:5000;width:24px;height:24px;border:2px solid rgba(30,30,30,.58);border-radius:50%;transform:translate(-50%,-50%);pointer-events:none;animation:demoFinger .55s ease forwards;background:rgba(255,255,255,.38)}
+@keyframes demoFinger{0%{opacity:0;transform:translate(-50%,-50%) scale(1.5)}35%{opacity:1;transform:translate(-50%,-50%) scale(.82)}75%{opacity:1;transform:translate(-50%,-50%) scale(1)}100%{opacity:0;transform:translate(-50%,-50%) scale(1.45)}}

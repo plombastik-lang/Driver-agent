@@ -1,2 +1,2 @@
-window.APP_VERSION='7.5';
-self.DRIVER_AGENT_VERSION='7.5';
+window.APP_VERSION='7.6';
+self.DRIVER_AGENT_VERSION='7.6';

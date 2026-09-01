@@ -227,6 +227,10 @@
         <div><strong>Проверка соединения</strong><p id="llmMeta">Используй, если агент перестал отвечать как обычно.</p></div>
         <button id="testLlm" type="button" class="secondary-button">Проверить</button>
       </div>
+      <div class="settings-block demo-mode-block">
+        <div><strong>Демо-режим</strong><p>Автоматически воспроизводит сценарий для демонстрации руководству. Данные реестра после демо не изменяются.</p></div>
+        <button id="openDemoMode" type="button" class="secondary-button">Включить</button>
+      </div>
       <div class="settings-block diagnostic-block">
         <div><strong>Диагностика агента</strong><p id="llmDiagnostic">Последний вызов: нет данных</p></div>
       </div>
@@ -246,8 +250,17 @@
     </section>
   </div>
 
+  <div id="demoPanel" class="demo-panel" hidden>
+    <div class="demo-panel-head"><div><span>ДЕМО-РЕЖИМ</span><strong id="demoTitle">Сценарий</strong></div><button id="closeDemoMode" type="button" aria-label="Закрыть">×</button></div>
+    <div class="demo-scenarios" id="demoScenarioPicker">
+      <button type="button" data-demo-scenario="income"><strong>Доходный драйвер</strong><small>Ипотека · модель Кредиты · P&amp;L</small></button>
+      <button type="button" data-demo-scenario="expense"><strong>Расходный драйвер</strong><small>Платежи · сокращение операций · P&amp;L</small></button>
+    </div>
+    <div class="demo-controls" id="demoControls" hidden><button id="demoPause" type="button">Пауза</button><button id="demoStop" type="button">Завершить</button><label>Скорость <select id="demoSpeed"><option value="1">Обычная</option><option value="1.6">Медленная</option><option value="0.65">Быстрая</option></select></label></div>
+  </div>
+
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
-  <script src="config.js?v=7.5"></script>
-  <script src="app.js?v=7.5"></script>
+  <script src="config.js?v=7.6"></script>
+  <script src="app.js?v=7.6"></script>
 </body>
 </html>

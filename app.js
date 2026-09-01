@@ -2461,9 +2461,9 @@ document.querySelector('[data-close-settings]')?.addEventListener('click',closeS
 document.querySelectorAll('.version-pill').forEach(el=>el.textContent=`v${APP_VERSION}`);
 
 // v8.0 — режиссируемое демо, синхронизированное с текущим UX.
-const demoState={running:false,paused:false,token:0,snapshot:null,tempId:null};
+const demoState={running:false,paused:false,token:0,snapshot:null,tempId:null,readingBoost:1};
 function demoDelay(ms){
-  const factor=Number(document.getElementById('demoSpeed')?.value||1);
+  const factor=Number(document.getElementById('demoSpeed')?.value||1) * (demoState.readingBoost||1);
   return new Promise(async resolve=>{let left=ms*factor;while(left>0&&demoState.running){if(demoState.paused){await new Promise(r=>setTimeout(r,120));continue;}const step=Math.min(120,left);await new Promise(r=>setTimeout(r,step));left-=step;}resolve();});
 }
 async function demoType(text){
@@ -2478,7 +2478,19 @@ async function demoTap(el,after=650){
   el.scrollIntoView({behavior:'smooth',block:'center'});await demoDelay(320);
   const r=el.getBoundingClientRect();const dot=document.createElement('div');dot.className='demo-finger';dot.style.left=`${r.left+r.width*.78}px`;dot.style.top=`${r.top+r.height*.55}px`;document.body.appendChild(dot);el.classList.add('demo-tap');await demoDelay(460);dot.remove();el.classList.remove('demo-tap');await demoDelay(after);
 }
-async function demoAgent(text,wait=850){await demoDelay(wait);if(demoState.running){addMessage('agent',text);await demoDelay(450);}}
+async function demoAgent(text,wait=850){
+  await demoDelay(wait);
+  if(!demoState.running)return;
+  addMessage('agent',text);
+  // На мобильном всегда подводим новый ответ агента в видимую область.
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r)));
+  const msgs=[...document.querySelectorAll('#messages .message.agent')];
+  const last=msgs[msgs.length-1];
+  if(last) last.scrollIntoView({behavior:'smooth',block:'center'});
+  // Даём время прочитать сообщение: длинные ответы остаются на экране дольше.
+  const readMs=Math.min(4200,Math.max(850, text.length*22));
+  await demoDelay(readMs);
+}
 function demoActions(html){const el=document.getElementById('contextActions');el.innerHTML=`<div class="demo-choice-box">${html}</div>`;el.scrollIntoView({behavior:'smooth',block:'end'});}
 async function demoChoose(selector){const el=document.querySelector(selector);await demoTap(el,420);if(el){el.classList.add('selected');const mark=el.querySelector('.choice-marker');if(mark)mark.textContent=mark.classList.contains('checkbox')?'✓':'●';}}
 async function demoContinue(){const b=document.querySelector('#contextActions .choice-primary, #contextActions .demo-primary, #contextActions .pl-confirm');await demoTap(b,520);document.getElementById('contextActions').innerHTML='';}
@@ -2497,6 +2509,8 @@ async function runFullDemo(){
   await demoChoose('[data-demo-choice="ind-clients"]');await demoChoose('[data-demo-choice="prod-credit"]');await demoContinue();
   await demoAgent('Понял: показатель — «Количество клиентов», продукт — «Кредитные карты», канал — «Мобильное приложение». Точного дубля нет. Комбинация новая, поэтому после создания драйвер будет направлен на согласование.');
   await demoAgent('Как изменение этого показателя влияет на прибыль Банка? Можно выбрать вариант или описать влияние своими словами.');
+  // После перехода к стоимости сценарий намеренно замедляется: здесь больше новой информации.
+  demoState.readingBoost=1.45;
   demoActions(`<div class="choice-list"><button class="choice-row" data-demo-choice="costhint"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Доход с одного клиента</strong><small>Например, комиссия по карте</small></span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Расход на одного клиента</strong><small>Например, обслуживание продукта</small></span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text">Другая логика</span></button></div>`);
   await demoChoose('[data-demo-choice="costhint"]');document.getElementById('contextActions').innerHTML='';
   await demoAgent('Сколько в среднем дохода Банку приносит один дополнительный клиент? Можно написать обычным языком.');
@@ -2537,7 +2551,7 @@ async function runExpenseDemo(){
 }
 async function startDemo(kind){
   if(demoState.running)return;if(demoState.snapshot)restoreDemoSnapshot();demoState.snapshot=demoSnapshot();demoState.running=true;demoState.paused=false;demoState.token++;const token=demoState.token;
-  messages=clone(seedMessages);flow=null;save();renderAll();switchTab('chat');document.getElementById('prompt')?.blur();document.body.classList.add('demo-recording');document.getElementById('demoScenarioPicker').hidden=true;document.getElementById('demoControls').hidden=false;document.getElementById('demoTitle').textContent=kind==='full'?'Полное демо':kind==='income'?'Доходный драйвер':'Сокращение расходов';
+  messages=clone(seedMessages);flow=null;demoState.readingBoost=1;save();renderAll();switchTab('chat');document.getElementById('prompt')?.blur();document.body.classList.add('demo-recording');document.getElementById('demoScenarioPicker').hidden=true;document.getElementById('demoControls').hidden=false;document.getElementById('demoTitle').textContent=kind==='full'?'Полное демо':kind==='income'?'Доходный драйвер':'Сокращение расходов';
   try{if(kind==='full')await runFullDemo();else if(kind==='income')await runIncomeDemo();else await runExpenseDemo();}finally{if(token===demoState.token){demoState.running=false;demoState.paused=false;document.getElementById('demoPause').textContent='Повторить';document.body.classList.remove('demo-recording');document.getElementById('demoPanel').hidden=false;}}
 }
 document.getElementById('openDemoMode')?.addEventListener('click',showDemoPanel);

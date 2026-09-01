@@ -1,4 +1,4 @@
-const APP_VERSION = globalThis.DRIVER_AGENT_VERSION || '7.8';
+const APP_VERSION = globalThis.DRIVER_AGENT_VERSION || '7.9';
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
 const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.9';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
@@ -866,15 +866,32 @@ function compactProfileLines(profile, limit=6){
   if(p.length>limit) lines.push(`… ещё ${p.length-limit} мес.`);
   return lines.join('\n');
 }
+function monthCountLabel(months){
+  const n=Number(months);
+  return Number.isFinite(n) && n>0 ? `${Math.round(n)} мес.` : '';
+}
 function monthlyFormulaLabel(f){
   if(!f) return '';
-  if(f.type==='decay_percent') return `1-й месяц = ${formatMoney(f.start)} ₽; далее каждый месяц −${f.percent}% от предыдущего, ${f.months} мес.`;
-  if(f.type==='growth_percent') return `1-й месяц = ${formatMoney(f.start)} ₽; далее каждый месяц +${f.percent}% к предыдущему, ${f.months} мес.`;
-  if(f.type==='decrease_fixed') return `1-й месяц = ${formatMoney(f.start)} ₽; далее каждый месяц −${formatMoney(f.amount)} ₽, ${f.months} мес.`;
-  if(f.type==='increase_fixed') return `1-й месяц = ${formatMoney(f.start)} ₽; далее каждый месяц +${formatMoney(f.amount)} ₽, ${f.months} мес.`;
-  if(f.type==='constant') return `${formatMoney(f.amount)} ₽ ежемесячно, ${f.months} мес.`;
-  if(f.type==='two_stage') return `${formatMoney(f.firstAmount)} ₽ × ${f.firstMonths} мес.; затем ${formatMoney(f.secondAmount)} ₽ × ${f.secondMonths} мес.`;
+  const duration=monthCountLabel(f.months);
+  const suffix=duration?`, ${duration}`:'';
+  if(f.type==='decay_percent') return `В первый месяц — ${formatMoney(f.start)} ₽; затем стоимость снижается на ${f.percent}% каждый месяц${suffix}.`;
+  if(f.type==='growth_percent') return `В первый месяц — ${formatMoney(f.start)} ₽; затем стоимость растёт на ${f.percent}% каждый месяц${suffix}.`;
+  if(f.type==='decrease_fixed') return `В первый месяц — ${formatMoney(f.start)} ₽; затем стоимость уменьшается на ${formatMoney(f.amount)} ₽ каждый месяц${suffix}.`;
+  if(f.type==='increase_fixed') return `В первый месяц — ${formatMoney(f.start)} ₽; затем стоимость увеличивается на ${formatMoney(f.amount)} ₽ каждый месяц${suffix}.`;
+  if(f.type==='constant') {
+    if(f.unitEconomics && f.basisText) return `${f.basisText} = ${formatMoney(f.amount)} ₽.`;
+    if(f.unitEconomics) return `Стоимость единицы показателя = ${formatMoney(f.amount)} ₽.`;
+    return duration ? `${formatMoney(f.amount)} ₽ в месяц в течение ${duration}.` : `${formatMoney(f.amount)} ₽.`;
+  }
+  if(f.type==='two_stage') return `${formatMoney(f.firstAmount)} ₽ в течение ${monthCountLabel(f.firstMonths)||'первого периода'}; затем ${formatMoney(f.secondAmount)} ₽ в течение ${monthCountLabel(f.secondMonths)||'второго периода'}.`;
   return '';
+}
+function humanizeStoredLogic(text){
+  return String(text||'')
+    .replace(/,?\s*undefined\s*мес\.?/gi,'')
+    .replace(/undefined/gi,'срок не указан')
+    .replace(/\s{2,}/g,' ')
+    .trim();
 }
 function calculateProfile(f){
   if(!f) return []; const out=[];
@@ -1292,6 +1309,19 @@ function checkIndicator(indicator) {
   if(!value) return 'missing';
   const rec=indicatorRecord(value);
   if(rec){ flow.candidate.indicator=rec.name; flow.candidate.unit=rec.unit; flow.candidate.newIndicator=false; return 'found'; }
+  const decision=indicatorDecision(value);
+  if(decision.status==='auto'){
+    const scale=SCALE_INDICATORS.find(x=>x.name===decision.value);
+    flow.candidate.indicator=decision.value;
+    flow.candidate.unit=scale?.unit||inferUnitForNewIndicator(decision.value);
+    flow.candidate.newIndicator=false;
+    if(!indicatorRegistry.some(x=>normalizeText(x.name)===normalizeText(decision.value))) indicatorRegistry.push({name:decision.value,unit:flow.candidate.unit,status:'Активен'});
+    return 'found';
+  }
+  if(decision.status==='clarify'){
+    flow.candidate.indicatorChoices=decision.candidates.map(x=>x.entity.name);
+    return 'clarify';
+  }
   flow.candidate.indicator=value; flow.candidate.newIndicator=true; return 'new';
 }
 function inferUnitForNewIndicator(name){
@@ -1373,6 +1403,7 @@ function continueFlow() {
   if (rejectUnknownProduct(c.product)) return;
 
   const indicatorState=checkIndicator(c.indicator);
+  if(indicatorState==='clarify'){ c.indicator=null; const opts=[...(c.indicatorChoices||[])]; save(); return ask('indicator','Не хочу угадывать показатель. Нашёл несколько вариантов в справочнике — выбери подходящий.',opts,'choice'); }
   if(indicatorState==='new'){
     c.newIndicatorPrepared=true;
     if(!c.unit) c.unit=inferUnitForNewIndicator(c.indicator);
@@ -1409,10 +1440,7 @@ function continueFlow() {
   // До этого места фиксируем только indicator + combination. Экономика начинается ниже.
   if(!c.driverDefinitionConfirmed){
     c.driverDefinitionConfirmed=true; flow.step='costIntro'; save();
-    addMessage('agent', `Драйвер определён:
-${buildDriverName(c)}
-
-Теперь отдельно определим его стоимость — как изменение показателя влияет на прибыль Банка.`);
+    addMessage('agent', `Драйвер определён.\nПоказатель: ${c.indicator}\nПродукт: ${c.product}${c.channel?`\nКанал: ${c.channel}`:''}${c.segment?`\nСегмент: ${c.segment}`:''}\n\nТеперь определим стоимость — как изменение показателя влияет на прибыль Банка.`);
     renderContextActions(); renderProgress(); return;
   }
   const model=availableModel(c);
@@ -1505,14 +1533,20 @@ function directUnitEconomicsRule(text,c={}){
   const t=String(text||'').toLowerCase().replace(/\s+/g,' ');
   const rub=[...t.matchAll(/(\d[\d\s]*(?:[,.]\d+)?)\s*(?:₽|руб(?:лей|ля|ль|\.)?)/gi)].map(m=>Number(m[1].replace(/\s/g,'').replace(',','.'))).filter(n=>n>0);
   if(!rub.length) return null;
-  const hasEconomics=/(доход|расход|комисс|прибыл|стоимост|приносит|эконом)/i.test(t);
-  const perUnit=/(кажд|одн(?:а|ой|у)?\s+(?:карт|операц)|с\s+(?:карт|операц)|на\s+1\b)/i.test(t);
+  const hasEconomics=/(доход|расход|комисс|прибыл|стоимост|стоит|приносит|эконом|банку)/i.test(t);
+  const percentBasis=t.match(/(\d+(?:[,.]\d+)?)\s*%\s*(?:измен|рост|сниж|увелич|уменьш)?/i);
+  const perUnit=/(кажд|одн(?:а|ой|у)?\s+(?:карт|операц)|с\s+(?:карт|операц)|на\s+1\b|1\s*%|процентн.*пункт)/i.test(t) || !!percentBasis;
   const qty=t.match(/(\d[\d\s]*(?:[,.]\d+)?)\s*(тыс(?:яч)?|млн)?\s*(?:карт|операц|шт)/i);
   if(!hasEconomics && !perUnit) return null;
-  let value=rub[rub.length-1];
-  // Если пользователь описал общий кейс «30 тыс. карт × 50 ₽», стоимость драйвера — 50 ₽ на 1 карту.
-  if(qty && rub.length) value=rub[rub.length-1];
-  return {type:'constant',start:value,amount:value,months:1,unitEconomics:true};
+  const value=rub[rub.length-1];
+  let basisText='';
+  if(percentBasis){
+    const pct=Number(percentBasis[1].replace(',','.'));
+    basisText=`Изменение показателя на ${formatMoney(pct)}%`;
+  } else if(/карт/i.test(t)) basisText='Одна дополнительная карта';
+  else if(/операц/i.test(t)) basisText='Одна операция';
+  else basisText='Изменение показателя на одну единицу';
+  return {type:'constant',start:value,amount:value,months:1,unitEconomics:true,basisText,businessRationale:`${basisText} влияет на прибыль Банка на ${formatMoney(value)} ₽.`};
 }
 function directConstantRule(text){
   const t=String(text||'').toLowerCase().replace(/\s+/g,' ');
@@ -1598,8 +1632,8 @@ function handleFlowAnswer(text) {
       let f=directUnitEconomicsRule(text,c)||directConstantRule(text); try{ if(!f) f=await interpretCostLogic(text); }catch{ if(!f) f=localInterpretCostLogic(text); }
       if(!flow) return;
       if(!f){ flow.step='costRule'; save(); addMessage('agent','Не смог однозначно понять правило. Укажи начальное значение, как оно меняется и срок расчёта.'); renderContextActions(); return; }
-      c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f)||text; c.businessRationale=c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
       if(f.type!=='two_stage' && !f.months){ f.months=1; }
+      c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f)||text; c.businessRationale=f.businessRationale||c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
       const calculated=calculateProfile(f);
       if(!calculated.length || !hasNonZeroEffect(calculated)){ flow.step='costRule'; save(); addMessage('agent','Не получилось получить ненулевую стоимость драйвера. Уточни, какой доход или расход приходится на единицу показателя.'); renderContextActions(); renderProgress(); return; }
       c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
@@ -1629,8 +1663,8 @@ ${compactProfileLines(calculated)}
       let f=null; try{ f=await interpretCostLogic(text,previous); }catch{ f=null; }
       if(!flow) return;
       if(!f){ flow.step='formulaConfirm'; save(); addMessage('agent','Не смог однозначно применить корректировку. Напиши, что именно изменить: начальное значение, процент или срок.'); renderContextActions(); return; }
-      c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f); c.businessRationale=c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
       if(f.type!=='two_stage' && !f.months){ f.months=1; }
+      c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f); c.businessRationale=f.businessRationale||c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
       const calculated=calculateProfile(f); if(!calculated.length){ flow.step='formulaConfirm'; save(); addMessage('agent','Не получилось пересчитать профиль. Уточни правило.'); renderContextActions(); return; }
       c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
       addMessage('agent',`Теперь понял так:\n${monthlyFormulaLabel(f)}\n\n${compactProfileLines(calculated)}\n\nИтого за ${calculated.length} мес.: ${formatMoney(profileTotal(calculated))} ₽\n\nПодтвердить расчёт?`);
@@ -2021,7 +2055,7 @@ function openDriver(id){
   const comboName=document.getElementById('editCombinationName'); if(comboName) comboName.textContent=combo?.name||'—';
   const comboBody=document.getElementById('editCombinationComposition'); if(comboBody) comboBody.textContent=combo?combinationComposition(combo):'—';
   document.getElementById('editCost').value=d.costMode==='single'?(d.cost||''):'';
-  document.getElementById('editCostLogic').value=d.costLogicText||'';
+  document.getElementById('editCostLogic').value=humanizeStoredLogic(d.costLogicText||'');
   document.getElementById('editBusinessRationale').value=d.businessRationale||'';
   const mp=d.modelParams||{};
   document.getElementById('editAvgCheck').value=mp.avgCheck||'';
@@ -2221,7 +2255,7 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
   const updatedEffectType=document.getElementById('editEffectType').value;
   if(calcMethod!=='model' && editedAllocations.some(a=>!plArticleMatchesEffect(a.article,updatedEffectType))){ toast(`Для типа эффекта «${updatedEffectType}» выбраны неподходящие статьи P&L`); return; }
   const updatedCombo=ensureCombination({product:updatedProduct,channel:updatedChannel,segment:updatedSegment});
-  Object.assign(d,{name:buildDriverName({indicator:updatedIndicator,product:updatedProduct,channel:updatedChannel,segment:updatedSegment}),indicator:updatedIndicator,product:updatedProduct,effectType:updatedEffectType,unit,channel:updatedChannel,segment:updatedSegment,combinationId:updatedCombo?.id||'',combinationName:updatedCombo?.name||'',base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?(availableModel({indicator:updatedIndicator,product:updatedProduct})?.id||d.modelId||''):'' ,modelParams,plAllocations:editedAllocations,incrementMode:document.getElementById('editIncrementMode').value,status});
+  Object.assign(d,{name:buildDriverName({indicator:updatedIndicator,product:updatedProduct,channel:updatedChannel,segment:updatedSegment}),indicator:updatedIndicator,product:updatedProduct,effectType:updatedEffectType,unit,channel:updatedChannel,segment:updatedSegment,combinationId:updatedCombo?.id||'',combinationName:updatedCombo?.name||'',base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:humanizeStoredLogic(document.getElementById('editCostLogic').value.trim()),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?(availableModel({indicator:updatedIndicator,product:updatedProduct})?.id||d.modelId||''):'' ,modelParams,plAllocations:editedAllocations,incrementMode:document.getElementById('editIncrementMode').value,status});
   if(calcMethod==='model'){
     const result=calculateModel(d); if(result.profile.length){ d.costProfile=result.profile; d.plAllocations=result.allocations; d.cost=String(profileTotal(result.profile)); d.costMode=result.profile.length>1?'monthly':'single'; }
   }

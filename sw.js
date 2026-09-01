@@ -1,5 +1,5 @@
 importScripts('./config.js?v=7.6');
-const CACHE=`driver-agent-v${globalThis.DRIVER_AGENT_VERSION}-20260831-5`;
+const CACHE=`driver-agent-v${globalThis.DRIVER_AGENT_VERSION}-20260901-7`;
 const ASSETS=['./','./index.html','./config.js?v=7.6','./styles.css?v=7.6','./app.js?v=7.6','./manifest.webmanifest','./icon-180.png','./icon-192.png','./icon-512.png'];
 self.addEventListener('install',e=>{self.skipWaiting();e.waitUntil(caches.open(CACHE).then(c=>c.addAll(ASSETS)))});
 self.addEventListener('activate',e=>{e.waitUntil(Promise.all([caches.keys().then(keys=>Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)))),self.clients.claim()]))});

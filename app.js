@@ -325,8 +325,8 @@ function runScaleBenchmark(){
     avgProductLookupMs:lookupMs,avgIndicatorLookupMs:indicatorLookupMs,avgDriverSearchMs:driverMs,indicatorAccuracy:indicatorCorrect/indicatorCases.length,indicatorDangerousAuto:indicatorDangerous,indicatorSafetyRate:indicatorSafetyPass/indicatorSafety.length,indicatorClarificationSafety:indicatorClarify/indicatorAmbiguous.length,indicatorDetails,details
   };
 }
-const PL_ARTICLES = ['Чистый процентный доход','Расходы на резервы','Чистый комиссионный доход','Операционные доходы','Прочие доходы','Прочие расходы'];
-const INCOME_PL_ARTICLES = ['Чистый процентный доход','Чистый комиссионный доход','Операционные доходы','Прочие доходы'];
+const PL_ARTICLES = ['Чистый процентный доход','Расходы на резервы','Чистый комиссионный доход','Комиссионные доходы по банковским картам','Операционные доходы','Прочие доходы','Прочие расходы'];
+const INCOME_PL_ARTICLES = ['Чистый процентный доход','Чистый комиссионный доход','Комиссионные доходы по банковским картам','Операционные доходы','Прочие доходы'];
 const EXPENSE_PL_ARTICLES = ['Расходы на резервы','Прочие расходы'];
 function allowedPlArticles(effectType){ return effectType==='Расходы' ? EXPENSE_PL_ARTICLES : INCOME_PL_ARTICLES; }
 function plArticleMatchesEffect(article,effectType){ return allowedPlArticles(effectType).includes(article); }
@@ -690,6 +690,7 @@ function parsePlArticles(text){
   const t=normalizeText(text);
   const aliases=[
     ['Чистый процентный доход',/чпд|процентн.*доход/],
+    ['Комиссионные доходы по банковским картам',/комиссионн.*(?:карт|карточ)|карт.*комиссионн/],
     ['Чистый комиссионный доход',/чкд|комиссионн.*доход/],
     ['Расходы на резервы',/резерв/],
     ['Операционные доходы',/операционн.*доход/],
@@ -2718,18 +2719,24 @@ async function runFullDemo(){
   demoActions(`<div class="candidate-resolution"><div class="candidate-group"><span class="candidate-group-title">Показатель</span><div class="choice-list"><button class="choice-row" data-demo-choice="ind-clients"><span class="choice-marker radio">○</span><span class="choice-text">Количество клиентов</span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text">Количество продаж</span></button></div></div><div class="candidate-group"><span class="candidate-group-title">Продукт</span><div class="choice-list"><button class="choice-row" data-demo-choice="prod-credit"><span class="choice-marker radio">○</span><span class="choice-text">Кредитные карты</span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text">Дебетовые карты</span></button></div></div></div><div class="choice-footer"><button class="choice-primary">Продолжить</button></div>`);
   await demoChoose('[data-demo-choice="ind-clients"]');await demoChoose('[data-demo-choice="prod-credit"]');await demoContinue();
   await demoAgent('Понял: показатель — «Количество клиентов», продукт — «Кредитные карты», канал — «Мобильное приложение». Точного дубля нет. Комбинация новая, поэтому после создания драйвер будет направлен на согласование.');
-  await demoAgent('Как изменение этого показателя влияет на прибыль Банка? Можно выбрать вариант или описать влияние своими словами.');
-  // После перехода к стоимости сценарий намеренно замедляется: здесь больше новой информации.
-  demoState.readingBoost=1.45;
-  demoActions(`<div class="choice-list"><button class="choice-row" data-demo-choice="costhint"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Доход с одного клиента</strong><small>Например, комиссия по карте</small></span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Расход на одного клиента</strong><small>Например, обслуживание продукта</small></span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text">Другая логика</span></button></div>`);
-  await demoChoose('[data-demo-choice="costhint"]');document.getElementById('contextActions').innerHTML='';
+  // Самый важный смысловой переход в демо: даём время прочитать вопрос и понять, откуда взялись подсказки.
+  demoState.readingBoost=2.05;
+  await demoAgent('Как изменение этого показателя влияет на прибыль Банка? Можно выбрать подходящий вариант или описать влияние своими словами.',1200);
+  demoActions(`<div class="demo-suggestion-note">Подсказки сформированы по показателю «Количество клиентов» и продукту «Кредитные карты».</div><div class="choice-list cost-hint-list"><button class="choice-row" data-demo-choice="costhint"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Доход с одного клиента</strong><span class="choice-explain">Комиссия или другой доход на одну карту / клиента</span></span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Расход на одного клиента</strong><span class="choice-explain">Обслуживание, выпуск или другая стоимость на клиента</span></span></button><button class="choice-row"><span class="choice-marker radio">○</span><span class="choice-text"><strong>Другая логика</strong><span class="choice-explain">Можно описать влияние своими словами</span></span></button></div>`);
+  await demoDelay(3200);
+  await demoChoose('[data-demo-choice="costhint"]');
+  await demoDelay(1700);
+  document.getElementById('contextActions').innerHTML='';
   await demoAgent('Сколько в среднем дохода Банку приносит один дополнительный клиент? Можно написать обычным языком.');
   await demoType('Каждый дополнительный клиент приносит 50 рублей комиссионного дохода в месяц');
   await demoAgent('Я понял влияние на прибыль Банка так:\n1 дополнительный клиент = +50 ₽ комиссионного дохода в месяц.\n\nСтоимость драйвера: 50 ₽\nЗа изменение показателя на: 1 клиента.');
   demoActions(`<button class="demo-primary">Подтвердить расчёт</button><button class="secondary">Изменить логику</button>`);await demoContinue();
-  await demoAgent('Выберите одну или несколько статей P&L. Показываю наиболее релевантные для кредитных карт.');
-  demoActions(`<div class="candidate-group"><span class="candidate-group-title">Статьи P&amp;L</span><div class="choice-list"><button class="choice-row" data-demo-choice="pl-fee"><span class="choice-marker checkbox"></span><span class="choice-text">Чистый комиссионный доход (ЧКД)</span></button><button class="choice-row"><span class="choice-marker checkbox"></span><span class="choice-text">Операционные доходы</span></button><button class="choice-row"><span class="choice-marker checkbox"></span><span class="choice-text">Прочие доходы</span></button></div></div><button class="pl-confirm">Продолжить · 1</button>`);
-  await demoChoose('[data-demo-choice="pl-fee"]');await demoContinue();
+  await demoAgent('По описанию «комиссионный доход» я подобрал наиболее релевантные статьи P&L. Выберите одну или несколько.');
+  demoActions(`<div class="demo-suggestion-note">Релевантность определена по смыслу расчёта: доход от клиента + комиссия по карте.</div><div class="candidate-group"><span class="candidate-group-title">Статьи P&amp;L</span><div class="choice-list"><button class="choice-row" data-demo-choice="pl-fee"><span class="choice-marker checkbox"></span><span class="choice-text"><strong>Чистый комиссионный доход (ЧКД)</strong><span class="choice-explain">Наиболее релевантная статья</span></span></button><button class="choice-row"><span class="choice-marker checkbox"></span><span class="choice-text"><strong>Комиссионные доходы по банковским картам</strong><span class="choice-explain">Более детальная комиссионная статья</span></span></button><button class="choice-row"><span class="choice-marker checkbox"></span><span class="choice-text">Операционные доходы</span></button></div></div><button class="pl-confirm">Продолжить · 1</button>`);
+  await demoDelay(3000);
+  await demoChoose('[data-demo-choice="pl-fee"]');
+  await demoDelay(1400);
+  await demoContinue();
   await demoAgent('Проверь перед созданием:\n\nПоказатель: Количество клиентов\nПродукт: Кредитные карты\nКанал: Мобильное приложение\nСтоимость драйвера: 50 ₽\nЗа изменение показателя на: 1 клиента\nСтатья: Чистый комиссионный доход');
   demoActions(`<button class="demo-primary">✓ Создать</button><button class="secondary">Изменить</button>`);await demoDelay(1700);await demoContinue();
   const d=demoFullDriver();drivers=drivers.filter(x=>x.id!==d.id);drivers.unshift(d);indicatorRegistry.find(x=>x.name==='Количество клиентов').status='Активен';combinationRegistry=combinationRegistry.filter(x=>x.id!==d.combinationId);combinationRegistry.push({id:d.combinationId,name:d.combinationName,product:d.product,channel:d.channel,segment:'',status:'Подготовлена'});demoState.tempId=d.id;save();renderRegistry();updateSummary();

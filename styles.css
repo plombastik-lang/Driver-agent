@@ -365,3 +365,25 @@ body.auth-pending .app-shell{visibility:hidden;pointer-events:none}
   .driver-card h3,.meta strong,td{color:#252832}.meta,.cost-line{background:#fff}.driver-form input,.driver-form select{background:#fff;color:#222;border-color:#d8dce5}
   .demo-panel{top:24px;right:24px}
 }
+
+/* v8.1 — demo clarity + warmer compact desktop experience */
+body.demo-recording #quickStart{display:none!important}
+@media (min-width:900px){
+  body{background:linear-gradient(180deg,#f7f5fa 0%,#eef1f5 100%)}
+  .app-shell{width:min(100% - 64px,820px);margin:52px auto}
+  .topbar{padding:0 6px 14px}
+  .topbar h1{font-size:22px;letter-spacing:-.02em}
+  .tabs{margin-bottom:14px;border-radius:14px;box-shadow:0 8px 24px rgba(39,31,55,.06)}
+  #chat.active{padding:18px 20px 18px;border-radius:20px;border:1px solid #dedfe7;box-shadow:0 20px 55px rgba(43,36,58,.10);background:rgba(255,255,255,.96)}
+  #chat::before{content:'✦  AI-помощник';font-size:18px;color:#292431;margin:0 0 14px}
+  #chat .messages{min-height:180px;max-height:480px;background:linear-gradient(180deg,#faf9fc 0%,#f5f3f8 100%);border:1px solid #e6e2eb;border-radius:16px;padding:12px;gap:10px}
+  #chat .message{max-width:78%;font-size:14px;line-height:1.45;border-radius:15px;padding:11px 13px}
+  #chat .message.agent{background:#fff;border:1px solid #e4e0e8;color:#28242e;box-shadow:0 4px 14px rgba(43,36,58,.04)}
+  #chat .message.user{background:#eee7f7;border:1px solid #ded1ee;color:#50366e}
+  #chat .message .label{color:#786d83}
+  #chat .quick-actions,#chat .context-actions{padding:10px 2px 8px;gap:8px}
+  #chat .quick-actions button,#chat .context-actions button{background:#fff;color:#62458a;border:1px solid #ded3ec;box-shadow:0 2px 7px rgba(62,45,82,.04)}
+  #chat .composer{grid-template-columns:1fr 46px;gap:9px;padding-top:8px}
+  #chat .composer textarea{height:46px;min-height:46px;border:1px solid #cfc9d7;background:#fff;box-shadow:inset 0 1px 2px rgba(0,0,0,.02)}
+  #chat .composer button{width:46px;height:46px;background:linear-gradient(135deg,#7651a8,#65429b)}
+}

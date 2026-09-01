@@ -1,4 +1,4 @@
-const APP_VERSION = globalThis.DRIVER_AGENT_VERSION || '7.7';
+const APP_VERSION = globalThis.DRIVER_AGENT_VERSION || '7.8';
 const REGISTRY_KEY = 'driver-agent.pwa.registry.v7';
 const MODEL_COST_REPAIR_KEY = 'driver-agent.pwa.model-cost-repair.v5.9';
 const MESSAGES_KEY = 'driver-agent.pwa.messages.v2';
@@ -1412,7 +1412,7 @@ function continueFlow() {
     addMessage('agent', `Драйвер определён:
 ${buildDriverName(c)}
 
-Теперь отдельно определим его стоимость — как изменение показателя превращается в финансовый эффект P&L.`);
+Теперь отдельно определим его стоимость — как изменение показателя влияет на прибыль Банка.`);
     renderContextActions(); renderProgress(); return;
   }
   const model=availableModel(c);
@@ -1471,9 +1471,9 @@ ${(c.plAllocations||[]).map(a=>`${shortArticleName(a.article)} ${formatMoney(pro
     return showPreview();
   }
 
-  if(!c.calcMethod) return ask('calcMethod','Готовой модели стоимости для этого драйвера пока нет. Как определить финансовый эффект на P&L?',['Описать логику финансового эффекта','Задать стоимость вручную']);
+  if(!c.calcMethod) return ask('calcMethod','Как изменение этого показателя влияет на прибыль Банка? Можно выбрать подходящий вариант или описать влияние своими словами.', relevantCostHints(c));
   c.costMode='monthly';
-  if(c.calcMethod==='rule' && !(c.costProfile||[]).length) return ask('costRule', `Опиши, как изменение показателя превращается именно в финансовый эффект P&L. Можно писать параметры в любом порядке — я буду собирать их в текущий расчёт. Например: «на 1 млн ₽ объёма выдач ЧКД 20 тыс. ₽ ежемесячно 12 месяцев». Если формула рассчитывает только сам показатель, я это отмечу и попрошу продолжить до P&L.`);
+  if(c.calcMethod==='rule' && !(c.costProfile||[]).length) return ask('costRule', `Как изменение этого показателя влияет на прибыль Банка? Опиши своими словами — я сам соберу расчёт и уточню только недостающие параметры. Например: «каждая карта приносит 50 ₽ комиссии в месяц».`);
   if(c.calcMethod==='manual' && !(c.costProfile||[]).length) return ask('costProfile', `Укажи стоимость вручную. Можно ввести одно значение или вставить помесячный профиль из Excel. В карточке каждое значение можно будет поправить отдельно.`);
   if(c.pendingPlArticles?.length>1 && !c.plSplitDone) return ask('plSplitMode','Как распределить общую стоимость между статьями?',['Поровну','Указать доли']);
   if(!(c.plAllocations||[]).length) return ask('plArticles','Выбери одну или несколько статей P&L. Сначала показываю наиболее релевантные для этого продукта. Можно также написать название обычным языком.',relevantPlArticles(c));
@@ -1493,6 +1493,26 @@ function looksLikeIndicatorFormulaInsteadOfCost(text,c){
   const hasIndicatorConstruction=/(количеств|число|шт|карт).*(средн.*чек|чек)|(средн.*чек|чек).*(количеств|число|шт|карт)/i.test(t);
   const outputLooksLikeVolume=/(объем|объём|выдач|оборот|сбор)/i.test(t) || /объем|объём/i.test(normalizeText(c?.indicator||''));
   return hasIndicatorConstruction && outputLooksLikeVolume && !hasPlEconomics;
+}
+function relevantCostHints(c={}){
+  const product=normalizeText(c.product||''), indicator=normalizeText(c.indicator||'');
+  if(product.includes('карт')) return ['Доход с одной карты','Расход на одну карту','Другая логика'];
+  if(product.includes('платеж') || indicator.includes('операц')) return ['Доход с одной операции','Расход на одну операцию','Экономия от сокращения операций','Другая логика'];
+  if(indicator.includes('объем') || indicator.includes('объём')) return ['Доход на объём показателя','Расход на объём показателя','Другая логика'];
+  return ['Доход с единицы показателя','Расход на единицу показателя','Другая логика'];
+}
+function directUnitEconomicsRule(text,c={}){
+  const t=String(text||'').toLowerCase().replace(/\s+/g,' ');
+  const rub=[...t.matchAll(/(\d[\d\s]*(?:[,.]\d+)?)\s*(?:₽|руб(?:лей|ля|ль|\.)?)/gi)].map(m=>Number(m[1].replace(/\s/g,'').replace(',','.'))).filter(n=>n>0);
+  if(!rub.length) return null;
+  const hasEconomics=/(доход|расход|комисс|прибыл|стоимост|приносит|эконом)/i.test(t);
+  const perUnit=/(кажд|одн(?:а|ой|у)?\s+(?:карт|операц)|с\s+(?:карт|операц)|на\s+1\b)/i.test(t);
+  const qty=t.match(/(\d[\d\s]*(?:[,.]\d+)?)\s*(тыс(?:яч)?|млн)?\s*(?:карт|операц|шт)/i);
+  if(!hasEconomics && !perUnit) return null;
+  let value=rub[rub.length-1];
+  // Если пользователь описал общий кейс «30 тыс. карт × 50 ₽», стоимость драйвера — 50 ₽ на 1 карту.
+  if(qty && rub.length) value=rub[rub.length-1];
+  return {type:'constant',start:value,amount:value,months:1,unitEconomics:true};
 }
 function directConstantRule(text){
   const t=String(text||'').toLowerCase().replace(/\s+/g,' ');
@@ -1540,9 +1560,15 @@ function handleFlowAnswer(text) {
   else if (flow.step === 'channel') c.channel = text.trim();
   else if (flow.step === 'segment') c.segment = text.trim();
   else if (flow.step === 'base') c.base = normalizeBaseAnswer(text);
-  else if (flow.step === 'modelChoice') { c.calcMethod = normalizeText(text).includes('модел') || normalizeText(text).includes('использ') ? 'model' : ''; if(!c.calcMethod) c.calcMethod='rule'; c.modelId=flow.modelId||''; }
+  else if (flow.step === 'modelChoice') {
+    const t=normalizeText(text);
+    const useOther=t.includes('друг') || t.includes('сво') || t.includes('логик');
+    c.calcMethod=useOther?'rule':'model';
+    if(useOther){ c.modelId=''; c.modelParams=null; c.costProfile=[]; c.cost=''; c.plAllocations=[]; flow.modelId=''; }
+    else c.modelId=flow.modelId||'';
+  }
   else if (flow.step === 'calcMethod') {
-    const t=normalizeText(text); c.calcMethod=t.includes('модел')?'model':(t.includes('логик')||t.includes('правил'))?'rule':'manual'; c.costMode='monthly';
+    const t=normalizeText(text); c.calcMethod=(t.includes('вручн')||t.includes('значен'))?'manual':'rule'; c.costMode='monthly'; c.modelId=''; c.modelParams=null;
   }
   else if(flow.step==='modelAvgCheck'){ const x=parseCost(text); if(!x){addMessage('agent','Не смог разобрать средний чек. Укажи сумму в рублях.');return;} c.modelParams={...(c.modelParams||{}),avgCheck:x.cost}; }
   else if(flow.step==='modelConversion'){ const n=String(text).replace(',','.').match(/\d+(?:\.\d+)?/); if(!n){addMessage('agent','Укажи коэффициент в процентах.');return;} c.modelParams={...(c.modelParams||{}),conversion:n[0]}; }
@@ -1565,19 +1591,19 @@ function handleFlowAnswer(text) {
       addMessage('agent', `Похоже, эта формула рассчитывает сам показатель «${c.indicator}», а не его финансовую стоимость. Например, количество × средний чек может дать объём выдач, но ещё не показывает влияние на P&L.
 
 Продолжи логику до финансового эффекта: через маржу, комиссии, риск, резервы, расходы — либо укажи стоимость единицы драйвера напрямую.`);
-      return ask('costRule','Как изменение этого показателя влияет на P&L?');
+      return ask('costRule','Как изменение этого показателя влияет на прибыль Банка?');
     }
     flow.pendingCostLogic=text; flow.step='formulaParsing'; save(); addMessage('agent','Проверяю логику финансового эффекта и собираю расчёт…');
     (async()=>{
-      let f=directConstantRule(text); try{ if(!f) f=await interpretCostLogic(text); }catch{ if(!f) f=localInterpretCostLogic(text); }
+      let f=directUnitEconomicsRule(text,c)||directConstantRule(text); try{ if(!f) f=await interpretCostLogic(text); }catch{ if(!f) f=localInterpretCostLogic(text); }
       if(!flow) return;
       if(!f){ flow.step='costRule'; save(); addMessage('agent','Не смог однозначно понять правило. Укажи начальное значение, как оно меняется и срок расчёта.'); renderContextActions(); return; }
       c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f)||text; c.businessRationale=c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
-      if(f.type!=='two_stage' && !f.months){ return ask('formulaMonths','На сколько месяцев применить это правило? Например: 12, 24 или 36.'); }
+      if(f.type!=='two_stage' && !f.months){ f.months=1; }
       const calculated=calculateProfile(f);
-      if(!calculated.length || !hasNonZeroEffect(calculated)){ flow.step='costRule'; save(); addMessage('agent','Расчёт не дал ненулевого финансового эффекта. Я не буду сохранять нулевую стоимость. Уточни параметры или логику влияния на P&L.'); renderContextActions(); renderProgress(); return; }
+      if(!calculated.length || !hasNonZeroEffect(calculated)){ flow.step='costRule'; save(); addMessage('agent','Не получилось получить ненулевую стоимость драйвера. Уточни, какой доход или расход приходится на единицу показателя.'); renderContextActions(); renderProgress(); return; }
       c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
-      addMessage('agent', `Я понял правило так:
+      addMessage('agent', `Я понял влияние на прибыль Банка так:
 ${monthlyFormulaLabel(f)}
 
 Бизнес-смысл: ${c.businessRationale}
@@ -1604,7 +1630,7 @@ ${compactProfileLines(calculated)}
       if(!flow) return;
       if(!f){ flow.step='formulaConfirm'; save(); addMessage('agent','Не смог однозначно применить корректировку. Напиши, что именно изменить: начальное значение, процент или срок.'); renderContextActions(); return; }
       c.costFormula=f; c.costLogicText=monthlyFormulaLabel(f); c.businessRationale=c.businessRationale||'Эффект рассчитывается по бизнес-правилу, заданному пользователем.';
-      if(f.type!=='two_stage' && !f.months){ flow.step='formulaMonths'; save(); return ask('formulaMonths','На сколько месяцев применить это правило?'); }
+      if(f.type!=='two_stage' && !f.months){ f.months=1; }
       const calculated=calculateProfile(f); if(!calculated.length){ flow.step='formulaConfirm'; save(); addMessage('agent','Не получилось пересчитать профиль. Уточни правило.'); renderContextActions(); return; }
       c.costProfile=calculated; c.cost=String(profileTotal(calculated)); flow.step='formulaConfirm'; save();
       addMessage('agent',`Теперь понял так:\n${monthlyFormulaLabel(f)}\n\n${compactProfileLines(calculated)}\n\nИтого за ${calculated.length} мес.: ${formatMoney(profileTotal(calculated))} ₽\n\nПодтвердить расчёт?`);
@@ -1855,12 +1881,14 @@ function renderModels(){
   }).join('')}</div>`;
 }
 function renderDictionaries(){
-  document.getElementById('indicatorDict').innerHTML=indicatorRegistry.map(x=>`<tr><td>${escapeHtml(x.name)}</td><td>${escapeHtml(x.unit||'—')}</td><td><span class="table-status ${x.status==='Подготовлен'?'approval':''}">${escapeHtml(x.status)}</span></td></tr>`).join('');
-  document.getElementById('productDict').innerHTML=PRODUCTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
-  const ch=document.getElementById('channelDict'); if(ch) ch.innerHTML=CORE_CHANNELS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
-  const sg=document.getElementById('segmentDict'); if(sg) sg.innerHTML=CORE_SEGMENTS.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
-  const combo=document.getElementById('combinationDict'); if(combo) combo.innerHTML=combinationRegistry.map(x=>`<tr><td><strong>${escapeHtml(x.name)}</strong><small>${escapeHtml(combinationType(x))}</small></td><td><span class="table-status ${x.status==='Подготовлена'?'approval':''}">${escapeHtml(x.status||'Активна')}</span></td></tr>`).join('');
-  const pl=document.getElementById('plArticleDict'); if(pl) pl.innerHTML=PL_ARTICLES.map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активна</span></td></tr>`).join('');
+  const q=normalizeText(document.getElementById('dictionarySearch')?.value||'');
+  const match=x=>!q||normalizeText(x).includes(q);
+  document.getElementById('indicatorDict').innerHTML=indicatorRegistry.filter(x=>match(x.name)).map(x=>`<tr><td>${escapeHtml(x.name)}</td><td>${escapeHtml(x.unit||'—')}</td><td><span class="table-status ${x.status==='Подготовлен'?'approval':''}">${escapeHtml(x.status)}</span></td></tr>`).join('');
+  document.getElementById('productDict').innerHTML=PRODUCTS.filter(match).map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  const ch=document.getElementById('channelDict'); if(ch) ch.innerHTML=CORE_CHANNELS.filter(match).map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  const sg=document.getElementById('segmentDict'); if(sg) sg.innerHTML=CORE_SEGMENTS.filter(match).map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активен</span></td></tr>`).join('');
+  const combo=document.getElementById('combinationDict'); if(combo) combo.innerHTML=combinationRegistry.filter(x=>match(x.name)).map(x=>`<tr><td><strong>${escapeHtml(x.name)}</strong><small>${escapeHtml(combinationType(x))}</small></td><td><span class="table-status ${x.status==='Подготовлена'?'approval':''}">${escapeHtml(x.status||'Активна')}</span></td></tr>`).join('');
+  const pl=document.getElementById('plArticleDict'); if(pl) pl.innerHTML=PL_ARTICLES.filter(match).map(x=>`<tr><td>${escapeHtml(x)}</td><td><span class="table-status">Активна</span></td></tr>`).join('');
   document.getElementById('indicatorCount').textContent=`${indicatorRegistry.length} записей`;
   document.getElementById('productCount').textContent=`${PRODUCTS.length} записей`;
   const cc=document.getElementById('channelCount'); if(cc) cc.textContent=`${CORE_CHANNELS.length} записей`;
@@ -2146,6 +2174,7 @@ document.getElementById('quickStart')?.addEventListener('click',e=>{
   if(action==='update'){ switchTab('registry'); toast('Выбери драйвер и открой его карточку'); }
 });
 document.getElementById('registrySearch').addEventListener('input',renderRegistry);
+document.getElementById('dictionarySearch')?.addEventListener('input',renderDictionaries);
 document.getElementById('driverList').addEventListener('click',e=>{
   const row=e.target.closest('[data-open-driver]');
   if(!row) return;
@@ -2173,8 +2202,13 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
     const articleNames=editedAllocations.map(a=>a.article);
     if(new Set(articleNames).size!==articleNames.length){ toast('Одна статья P&L выбрана несколько раз'); return; }
   }
+  if(calcMethod==='rule'){
+    const logic=document.getElementById('editCostLogic').value.trim();
+    const parsed=directUnitEconomicsRule(logic,d)||directConstantRule(logic)||localInterpretCostLogic(logic);
+    if(parsed){ if(!parsed.months) parsed.months=1; const recalculated=calculateProfile(parsed); if(hasNonZeroEffect(recalculated)){ costProfile=recalculated; d.costFormula=parsed; if(editedAllocations.length){ const arts=editedAllocations.map(a=>a.article); editedAllocations=splitProfileByPercent(costProfile,arts,arts.map(()=>100/arts.length)); } } }
+  }
   if((calcMethod==='model'||calcMethod==='rule') && !editedAllocations.length) editedAllocations=d.plAllocations||[];
-  if(editedAllocations.length) costProfile=profileFromPlAllocations(editedAllocations);
+  if(editedAllocations.length && calcMethod!=='rule') costProfile=profileFromPlAllocations(editedAllocations);
   const cost=costProfile.length?String(profileTotal(costProfile)):document.getElementById('editCost').value.trim();
   const status=document.getElementById('editStatus').value;
   if(status==='Готов' && !hasNonZeroEffect(costProfile.length?costProfile:[cost])){ toast('Стоимость драйвера не может быть 0 ₽'); return; }
@@ -2186,12 +2220,6 @@ document.getElementById('driverForm').addEventListener('submit',e=>{
   let updatedIndicator=document.getElementById('editIndicator').value.trim(); const updatedProduct=document.getElementById('editProduct').value.trim(), updatedChannel=document.getElementById('editChannel').value.trim(), updatedSegment=document.getElementById('editSegment').value.trim();
   const updatedEffectType=document.getElementById('editEffectType').value;
   if(calcMethod!=='model' && editedAllocations.some(a=>!plArticleMatchesEffect(a.article,updatedEffectType))){ toast(`Для типа эффекта «${updatedEffectType}» выбраны неподходящие статьи P&L`); return; }
-  if(updatedEffectType==='Расходы'){
-    const normalized=expenseIndicatorName(updatedIndicator);
-    if(!normalized){ toast('Для расходного эффекта укажи показатель как сокращение или снижение'); return; }
-    updatedIndicator=normalized;
-    if(!indicatorRegistry.some(x=>normalizeText(x.name)===normalizeText(normalized))) indicatorRegistry.push({name:normalized,unit,status:'Подготовлен'});
-  }
   const updatedCombo=ensureCombination({product:updatedProduct,channel:updatedChannel,segment:updatedSegment});
   Object.assign(d,{name:buildDriverName({indicator:updatedIndicator,product:updatedProduct,channel:updatedChannel,segment:updatedSegment}),indicator:updatedIndicator,product:updatedProduct,effectType:updatedEffectType,unit,channel:updatedChannel,segment:updatedSegment,combinationId:updatedCombo?.id||'',combinationName:updatedCombo?.name||'',base:document.getElementById('editBase').value,cost,costMode:monthly?'monthly':'single',calcMethod,costProfile:monthly?costProfile:[cost],costLogicText:document.getElementById('editCostLogic').value.trim(),businessRationale:document.getElementById('editBusinessRationale').value.trim(),modelId:calcMethod==='model'?(availableModel({indicator:updatedIndicator,product:updatedProduct})?.id||d.modelId||''):'' ,modelParams,plAllocations:editedAllocations,incrementMode:document.getElementById('editIncrementMode').value,status});
   if(calcMethod==='model'){
@@ -2386,7 +2414,7 @@ document.querySelector('[data-close-settings]')?.addEventListener('click',closeS
 // Единый источник версии для интерфейса и диагностики.
 document.querySelectorAll('.version-pill').forEach(el=>el.textContent=`v${APP_VERSION}`);
 
-// v7.7 — режиссируемое демо: видимые действия пользователя без системной клавиатуры.
+// v7.8 — режиссируемое демо: видимые действия пользователя без системной клавиатуры.
 const demoState={running:false,paused:false,token:0,snapshot:null,tempId:null};
 function demoDelay(ms){
   const factor=Number(document.getElementById('demoSpeed')?.value||1);
